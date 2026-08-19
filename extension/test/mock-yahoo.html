@@ -74,23 +74,28 @@
        配送方法は「値の行(div)」+アコーディオン内のラジオで、選んでも自動で閉じない。
        日数と発送元はネイティブselect。div行の判定がselectより先に採用されないことも検証する -->
   <div class="card">
-    <div class="lbl">配送方法<span class="req">必須</span></div>
-    <div class="picker" id="ship-head">選択してください（必須）</div>
-    <div id="ship-body" hidden>
-      <div>Yahoo!フリマのすべての商品は出品者の送料負担、全国一律送料、匿名配送です</div>
-      <label style="display:block;padding:10px"><input type="radio" name="carrier" value="yamato">おてがる配送（ヤマト運輸）</label>
-      <label style="display:block;padding:10px"><input type="radio" name="carrier" value="jp">おてがる配送（日本郵便）</label>
+    <!-- ラベルのテキストと入力欄が同じ枠に入る構造。
+         別項目のプルダウンを掴まないことの検証にはこの形が必要 -->
+    <div class="field">配送方法<span class="req">必須</span>
+      <div class="picker" id="ship-head">選択してください（必須）</div>
+      <div id="ship-body" hidden>
+        <div>Yahoo!フリマのすべての商品は出品者の送料負担、全国一律送料、匿名配送です</div>
+        <label style="display:block;padding:10px"><input type="radio" name="carrier" value="yamato">おてがる配送（ヤマト運輸）</label>
+        <label style="display:block;padding:10px"><input type="radio" name="carrier" value="jp">おてがる配送（日本郵便）</label>
+      </div>
     </div>
-    <div class="lbl" style="margin-top:12px">発送までの日数<span class="req">必須</span></div>
-    <select id="days">
-      <option value="">選択してください（必須）</option>
-      <option>1~2日</option><option>2~3日</option><option>3~7日</option>
-    </select>
-    <div class="lbl" style="margin-top:12px">発送元の地域<span class="req">必須</span></div>
-    <select id="from">
-      <option value="">選択してください（必須）</option>
-      <option>北海道</option><option>東京都</option><option>愛知県</option>
-    </select>
+    <div class="field" style="margin-top:12px">発送までの日数<span class="req">必須</span>
+      <select id="days">
+        <option value="">選択してください（必須）</option>
+        <option>1~2日</option><option>2~3日</option><option>3~7日</option>
+      </select>
+    </div>
+    <div class="field" style="margin-top:12px">発送元の地域<span class="req">必須</span>
+      <select id="from">
+        <option value="">選択してください（必須）</option>
+        <option>北海道</option><option>東京都</option><option>愛知県</option>
+      </select>
+    </div>
   </div>
 
   <!-- ページ内のヘルプリンク。「キャンセル」を含むが絶対にクリックしてはいけない -->
@@ -127,6 +132,7 @@
     const sheetBody = document.getElementById('sheet-body');
     const sheetTitle = document.getElementById('sheet-title');
     let catPath = [];
+    let catReset = false; // 「他のカテゴリから選ぶ」を押したか
 
     function openSheet(kind) {
       sheet.classList.add('open');
@@ -142,11 +148,27 @@
         });
         return;
       }
+      // 実サイト同様、最初は商品名から推測した候補を出す。
+      // 「他のカテゴリから選ぶ」を押すまで階層を辿れない
+      if (!catReset) {
+        sheetTitle.textContent = 'カテゴリはこちらですか';
+        sheetBody.innerHTML = `
+          <div class="opt"><div class="sub">アウトドア、釣り、旅行用品 &gt; 釣り &gt; 釣り用クーラーボックス</div><div>釣り用クーラーボックス</div></div>
+          <div class="opt"><div class="sub">アウトドア、釣り、旅行用品 &gt; 釣り &gt; その他釣り具</div><div>その他釣り具</div></div>
+          <div class="opt"><div class="sub">車、バイク、自転車 &gt; 自動車 &gt; タイヤ、ホイール &gt; ホイールナット</div><div>ホイールナット</div></div>
+          <div class="opt" id="cat-other" style="color:#e60000;text-align:center">他のカテゴリから選ぶ</div>`;
+        document.getElementById('cat-other').addEventListener('click', () => {
+          catReset = true;
+          openSheet('category');
+        });
+        return;
+      }
       sheetTitle.textContent = 'カテゴリ';
       let node = TREE;
       for (const p of catPath) node = node[p];
       const keys = Object.keys(node || {});
-      sheetBody.innerHTML = keys.map((k) => `<div class="opt">${k}</div>`).join('');
+      sheetBody.innerHTML = '<div class="sub" style="padding:8px">カテゴリ一覧</div>' +
+        keys.map((k) => `<div class="opt">${k}</div>`).join('');
       [...sheetBody.querySelectorAll('.opt')].forEach((el, i) => {
         el.addEventListener('click', () => {
           catPath.push(keys[i]);
@@ -170,7 +192,7 @@
     // data-sheet を持つピッカーだけがボトムシートを開く(配送方法はアコーディオン)
     document.querySelectorAll('.picker[data-sheet]').forEach((p) => {
       p.addEventListener('click', () => {
-        if (p.dataset.sheet === 'category') catPath = [];
+        if (p.dataset.sheet === 'category') { catPath = []; catReset = false; }
         openSheet(p.dataset.sheet);
       });
     });
@@ -214,7 +236,7 @@
       e.preventDefault();
       for (const f of e.dataTransfer.files) {
         const img = document.createElement('img');
-        img.src = URL.createObjectURL(f);
+        img.src = '/uploaded/' + encodeURIComponent(f.name); // 即アップロード想定(blob:ではない)
         document.getElementById('shots').appendChild(img);
       }
     });

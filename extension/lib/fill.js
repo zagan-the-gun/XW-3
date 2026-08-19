@@ -319,9 +319,30 @@ window.XW3 = window.XW3 || {};
   }
 
   // 階層カテゴリ: ネイティブselectなら i 段目、カスタムUIなら開いている選択肢から順に選ぶ
-  async function chooseCascade(blockOrSelect, parts) {
+  async function chooseCascade(blockOrSelect, parts, spec = {}) {
     const out = [];
     const block = cascadeScope(blockOrSelect, parts.length);
+
+    // Yahoo!フリマは商品名から推測したカテゴリ候補を先に出してくる。
+    // そのままでは階層を辿れないので「他のカテゴリから選ぶ」で一覧の先頭に戻す
+    if (spec.resetTexts?.length) {
+      const trigger = triggerIn(block);
+      if (trigger) {
+        trigger.click();
+        await sleep(700);
+      }
+      for (const t of spec.resetTexts) {
+        const node = await waitFor(
+          () => labelNodes(t).find((n) => isVisible(n) && inMainContent(n)) || null,
+          1500
+        );
+        if (node) {
+          (node.closest(ROW_SEL) || node).click();
+          await sleep(700);
+          break;
+        }
+      }
+    }
     for (let i = 0; i < parts.length; i += 1) {
       const selects = block ? [...block.querySelectorAll('select')].filter(isVisible) : [];
       let r;
@@ -363,6 +384,7 @@ window.XW3 = window.XW3 || {};
   // 対象ラベルと候補コントロールの間に「別の項目のラベル」が挟まる候補を落とす。
 
   const STOP = Symbol('stop'); // 探索をその枝で打ち切る合図
+  const BADGE_TEXTS = new Set(['必須', '任意', 'required', 'optional']);
 
   let knownLabels = []; // [{el, key}]
 
@@ -386,7 +408,10 @@ window.XW3 = window.XW3 || {};
   function isBlockedByOtherLabel(labelEl, control, ownKeys) {
     for (const { el, key } of knownLabels) {
       if (el === labelEl || ownKeys.has(key)) continue;
-      if (el.contains(control) || control.contains(el) || el.contains(labelEl)) continue;
+      if (el.contains(labelEl)) continue; // 自分のラベルを含む祖先(カード等)は無関係
+      if (control.contains(el)) continue;
+      // 他項目のラベルの内側にあるコントロールは、その項目のもの
+      if (el.contains(control)) return true;
       const afterLabel = labelEl.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING;
       const beforeControl = el.compareDocumentPosition(control) & Node.DOCUMENT_POSITION_FOLLOWING;
       if (afterLabel && beforeControl) return true;
@@ -548,13 +573,19 @@ window.XW3 = window.XW3 || {};
     // 2周目(最後の手段): role属性もbuttonも持たない「値を表示する行」。
     // Yahoo!フリマのピッカーがこれ。1周目を先に完走させないと、
     // 同じカードの少し下にあるネイティブselectより先にdivを掴んでしまう
+    // ラベルのテキストと入力欄が同じ枠に入っている構造もあるため、
+    // ラベルの子孫も候補にする。「必須」バッジやラベル自身の文字は除く
+    const labelText = (node) => norm(ownText(node));
     return scan((cur, node) => {
       const rows = preferUnblocked(
         orderedControls(cur, 'div, span, a, p', node).filter((el) => {
-          if (node.contains(el) || el.contains(node)) return false;
+          if (el === node || el.contains(node)) return false;
           if (el.querySelector('select, input, textarea')) return false; // 入力欄の入れ物は行ではない
           const t = ownText(el);
-          return t && t.length <= 30;
+          if (!t || t.length > 30) return false;
+          if (BADGE_TEXTS.has(norm(t))) return false; // 必須/任意のバッジ
+          if (norm(t) === labelText(node)) return false; // ラベルと同じ文字
+          return true;
         }),
         node,
         spec
@@ -789,10 +820,11 @@ window.XW3 = window.XW3 || {};
     return null;
   }
 
-  // 投入できたかの汎用判定。プレビューはほぼ必ず blob:/data: のimgになるため、
-  // サイト固有のクラス名に依存せず数えられる。
+  // 投入できたかの汎用判定。プレビューが blob:/data: とは限らず
+  // (Yahoo!フリマは即アップロードしてCDNのURLになる)、
+  // 画像の総数が増えたかで見るのが確実。パネルはShadow DOM内なので数に入らない。
   function defaultCountPhotos() {
-    return document.querySelectorAll('img[src^="blob:"], img[src^="data:"]').length;
+    return document.querySelectorAll('img').length;
   }
 
   // 「ここにドラッグ＆ドロップ」のような案内文からドロップ先を探す。
@@ -831,9 +863,9 @@ window.XW3 = window.XW3 || {};
       } catch {
         /* 次の手段へ */
       }
-      await sleep(700);
-      const after = count();
-      if (after > before) return { ok: true, method: `file-input(${after - before}枚を確認)` };
+      // アップロード完了までに時間がかかるサイトもあるので少し待つ
+      const grew = await waitFor(() => count() > before, 3000);
+      if (grew) return { ok: true, method: `file-input(${count() - before}枚を確認)` };
     }
 
     // 2) ドロップゾーンへ drop を合成(react-dropzone系はこちらが確実)
@@ -843,9 +875,8 @@ window.XW3 = window.XW3 || {};
       for (const type of ['dragenter', 'dragover', 'drop']) {
         zone.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }));
       }
-      await sleep(900);
-      const after = count();
-      if (after > before) return { ok: true, method: `drop(${after - before}枚を確認)` };
+      const grew = await waitFor(() => count() > before, 4000);
+      if (grew) return { ok: true, method: `drop(${count() - before}枚を確認)` };
     }
 
     // ファイルは渡せたが画面への反映を確認できないケース。
@@ -979,7 +1010,7 @@ window.XW3 = window.XW3 || {};
           );
         } else if (spec.cascade) {
           const parts = String(value).split(/\s*[>›»]\s*/).filter(Boolean);
-          const steps = await chooseCascade(findChoiceBlock(spec), parts);
+          const steps = await chooseCascade(findChoiceBlock(spec), parts, spec);
           if (!steps.length) push(label, { ok: false, reason: '項目が見つかりません' });
           steps.forEach((r, i) => push(`${label}(${i + 1}/${parts.length}) ${r.part}`, r));
         } else {

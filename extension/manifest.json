@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "出品くん Filler (XW-3)",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "XW-3 出品くんの商品データをメルカリ / Yahoo!フリマの出品フォームへ流し込みます。出品ボタンは押しません。",
   "permissions": ["storage"],
   "host_permissions": ["http://localhost:8720/*"],
