@@ -81,17 +81,17 @@
         <!-- 実サイトはリンクが直接テキストを持つ(アイコンはSVG)。この構造で探索できる必要がある -->
         <div class="field">
           <div class="lbl">カテゴリー</div>
-          <a href="#" class="cat-link" data-go="/sell/categories"><svg width="12" height="12"></svg>${state.category || 'カテゴリーを選択する'}</a>
+          <a href="/sell/categories" class="cat-link" data-go="/sell/categories"><svg width="12" height="12"></svg>${state.category || 'カテゴリーを選択する'}</a>
         </div>
         <!-- 子spanでラップされた構造 -->
         <!-- ブランド: 行のテキストが「選択してください」で他項目と紛れる。ラベルから辿れる必要がある -->
         <div class="field">
           <div class="lbl">ブランド <span style="font-size:11px;background:#eee;padding:1px 6px">任意</span></div>
-          <a href="#" data-go="/sell/brands"><span class="icon">＋</span>${state.brand || '選択してください'}</a>
+          <a href="/sell/brands" data-go="/sell/brands"><span class="icon">＋</span>${state.brand || '選択してください'}</a>
         </div>
         <div class="field">
           <div class="lbl">商品の状態</div>
-          <a href="#" data-go="/sell/conditions"><span class="icon">＋</span><span>${state.condition || '商品の状態を選択する'}</span></a>
+          <a href="/sell/conditions" data-go="/sell/conditions"><span class="icon">＋</span><span>${state.condition || '商品の状態を選択する'}</span></a>
         </div>
         <div class="field">
           <div class="lbl">配送料の負担</div>

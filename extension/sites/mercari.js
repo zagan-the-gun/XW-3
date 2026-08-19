@@ -49,6 +49,7 @@ window.XW3.registerSite({
       kind: 'page',
       search: true,
       labels: ['ブランド'],
+      openTexts: ['選択してください'], // path指定のリンク検出が主。これは保険
       path: '/sell/brands',
     },
     condition: {

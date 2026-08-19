@@ -441,21 +441,41 @@ window.XW3 = window.XW3 || {};
   // クリック候補を集めて順に試し、「実際に開いたか」を確認できたものを採用する。
   function openTargets(spec) {
     const targets = [];
+
+    // 遷移先のパスが分かっているなら、そのパスへのリンクを直接探すのが最も確実
+    // (行の見た目や文言に依存しない)
+    if (spec.path) {
+      for (const a of document.querySelectorAll(`a[href*="${spec.path}"]`)) {
+        if (isVisible(a)) targets.push(a);
+      }
+    }
+
     for (const t of spec.openTexts || []) {
       for (const node of labelNodes(t)) targets.push(node.closest(ROW_SEL) || node);
       for (const c of clickableCandidates()) {
         if (score(c.textContent, t) >= 80) targets.push(c);
       }
     }
+
     for (const label of spec.labels || []) {
       for (const node of labelNodes(label)) {
-        // ラベルの「後ろにある行」を優先する。祖先(フィールド枠)を先に掴むと
-        // クリックしても何も起きないため
-        const el = resolveFromLabel(node, ROW_SEL) || node.closest(ROW_SEL);
-        if (el) targets.push(el);
+        // ラベルの後ろにあるリンク/ボタンを(1つではなく)全部候補にする。
+        // 行がラッパーdivで包まれている場合、最初の1つだけではリンクに届かない
+        let scope = node;
+        for (let d = 0; d < 4 && scope && scope.tagName !== 'BODY'; d += 1) {
+          const found = [
+            ...orderedControls(scope, 'a, button, [role="button"]', node),
+            ...orderedControls(scope, ROW_SEL, node),
+          ];
+          if (found.length) {
+            targets.push(...found);
+            break; // 隣の項目まで広げない
+          }
+          scope = scope.parentElement;
+        }
         // ラベルの隣にある行そのもの(div行のレイアウト)
-        const scope = node.parentElement;
-        const row = scope && [...scope.children].find((c) => c !== node && isVisible(c));
+        const parent = node.parentElement;
+        const row = parent && [...parent.children].find((c) => c !== node && isVisible(c));
         if (row) targets.push(row);
       }
     }
