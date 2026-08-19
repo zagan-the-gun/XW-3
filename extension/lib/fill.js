@@ -281,7 +281,11 @@ window.XW3 = window.XW3 || {};
     const t = norm(text);
     if (!t) return [];
     const out = [];
-    for (const el of root.querySelectorAll('label, legend, h1, h2, h3, h4, h5, span, div, p, dt, th, b, strong')) {
+    // a / button も対象にする。メルカリの「カテゴリーを選択する」のように
+    // リンク自身が直接テキストを持つ行があり、これを外すと見つけられない。
+    for (const el of root.querySelectorAll(
+      'label, legend, h1, h2, h3, h4, h5, span, div, p, dt, th, b, strong, a, button'
+    )) {
       if (!isVisible(el)) continue;
       const own = ownText(el);
       if (!own || own.length > 40) continue;
@@ -431,29 +435,44 @@ window.XW3 = window.XW3 || {};
   // 文字列が一致した要素の「クリックできそうな親」まで遡ってクリックする
   const ROW_SEL = 'a, button, [role="button"], li, [class*="row"], [class*="Row"], [tabindex]';
 
-  async function openSelectionPage(spec) {
-    // 「カテゴリーを選択する」のような文言を持つ行
+  // 行の実装はリンク・ボタン・div+onClickのいずれもあり得る。
+  // クリック候補を集めて順に試し、「実際に開いたか」を確認できたものを採用する。
+  function openTargets(spec) {
+    const targets = [];
     for (const t of spec.openTexts || []) {
-      for (const node of labelNodes(t)) {
-        (node.closest(ROW_SEL) || node).click();
-        return true;
+      for (const node of labelNodes(t)) targets.push(node.closest(ROW_SEL) || node);
+      for (const c of clickableCandidates()) {
+        if (score(c.textContent, t) >= 80) targets.push(c);
       }
     }
-    // ラベル行から辿る(すでに値が入っていて openText が出ていない場合など)
     for (const label of spec.labels || []) {
       for (const node of labelNodes(label)) {
-        const clickable = node.closest(ROW_SEL) || resolveFromLabel(node, ROW_SEL);
-        if (clickable) {
-          clickable.click();
-          return true;
-        }
-        // ラベルの隣にある行そのものをクリックする(div行のレイアウト)
+        const el = node.closest(ROW_SEL) || resolveFromLabel(node, ROW_SEL);
+        if (el) targets.push(el);
+        // ラベルの隣にある行そのもの(div行のレイアウト)
         const scope = node.parentElement;
         const row = scope && [...scope.children].find((c) => c !== node && isVisible(c));
-        if (row) {
-          row.click();
-          return true;
-        }
+        if (row) targets.push(row);
+      }
+    }
+    return [...new Set(targets)].filter((el) => el && isVisible(el));
+  }
+
+  function clickWithMouseEvents(el) {
+    const opts = { bubbles: true, cancelable: true, view: window };
+    for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click']) {
+      const Ctor = type.startsWith('pointer') && window.PointerEvent ? PointerEvent : MouseEvent;
+      el.dispatchEvent(new Ctor(type, opts));
+    }
+  }
+
+  async function openSelectionPage(spec, isOpen) {
+    const targets = openTargets(spec);
+    // まず素直な click()、それで開かなければマウスイベント列を送る
+    for (const send of [(el) => el.click(), clickWithMouseEvents]) {
+      for (const el of targets) {
+        send(el);
+        if (await waitFor(isOpen, 1200)) return true;
       }
     }
     return false;
@@ -478,11 +497,21 @@ window.XW3 = window.XW3 || {};
     const parts = spec.cascade
       ? String(value).split(/\s*[>›»]\s*/).filter(Boolean)
       : [String(value)];
-    if (!(await openSelectionPage(spec))) {
-      return [{ part: parts[0], ok: false, reason: '選択ページを開けませんでした' }];
+    // 「開いた」の判定。パス指定があれば遷移、なければ選択肢の出現で見る
+    const isOpen = spec.path
+      ? () => location.pathname.startsWith(spec.path)
+      : () => collectOptionNodes().length > 0;
+
+    if (!(await openSelectionPage(spec, isOpen))) {
+      // 開けていない状態で選択肢を探すと無関係な候補を拾うため、ここで打ち切る
+      return [
+        {
+          part: parts[0],
+          ok: false,
+          reason: `選択ページ(${spec.path || '選択UI'})を開けませんでした`,
+        },
+      ];
     }
-    if (spec.path) await waitFor(() => location.pathname.startsWith(spec.path), 4000);
-    else await sleep(500);
 
     const out = [];
     for (const part of parts) {
@@ -615,12 +644,21 @@ window.XW3 = window.XW3 || {};
         `<${el.tagName.toLowerCase()}> ${attrs}${extra} visible=${isVisible(el)} nearLabel="${near(el)}"`
       );
     }
-    lines.push('', '--- buttons / choice-like ---');
-    for (const el of root.querySelectorAll('button, [role="button"], [aria-haspopup]')) {
+    lines.push('', '--- クリック可能な要素(行・リンク・ボタン) ---');
+    for (const el of root.querySelectorAll(
+      'a, button, [role="button"], [role="link"], [aria-haspopup], [tabindex], [class*="row"], [class*="Row"], li'
+    )) {
       if (!isVisible(el)) continue;
-      const t = el.textContent.trim().slice(0, 30);
+      const t = el.textContent.trim().slice(0, 36);
       if (!t) continue;
-      lines.push(`<${el.tagName.toLowerCase()}> text="${t}" nearLabel="${near(el)}"`);
+      const attrs = ['href', 'class', 'data-testid', 'role', 'tabindex']
+        .map((a) => (el.getAttribute?.(a) ? `${a}="${String(el.getAttribute(a)).slice(0, 60)}"` : ''))
+        .filter(Boolean)
+        .join(' ');
+      // 直下テキストか子要素のテキストかで探索方法が変わるため両方出す
+      lines.push(
+        `<${el.tagName.toLowerCase()}> ${attrs} text="${t}" ownText="${ownText(el).slice(0, 36)}"`
+      );
     }
     return lines.join('\n');
   }

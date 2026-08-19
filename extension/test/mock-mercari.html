@@ -62,17 +62,15 @@
           <div class="lbl">商品の説明</div>
           <div><textarea maxlength="1000"></textarea></div>
         </div>
+        <!-- 実サイトはリンクが直接テキストを持つ(アイコンはSVG)。この構造で探索できる必要がある -->
         <div class="field">
           <div class="lbl">カテゴリー</div>
-          <div class="row" data-go="/sell/categories">
-            <span>${state.category || 'カテゴリーを選択する'}</span><span class="val">›</span>
-          </div>
+          <a href="#" class="cat-link" data-go="/sell/categories"><svg width="12" height="12"></svg>${state.category || 'カテゴリーを選択する'}</a>
         </div>
+        <!-- 子spanでラップされた構造 -->
         <div class="field">
           <div class="lbl">商品の状態</div>
-          <div class="row" data-go="/sell/conditions">
-            <span>${state.condition || '商品の状態を選択する'}</span><span class="val">›</span>
-          </div>
+          <a href="#" data-go="/sell/conditions"><span class="icon">＋</span><span>${state.condition || '商品の状態を選択する'}</span></a>
         </div>
         <div class="field">
           <div class="lbl">配送料の負担</div>
@@ -148,7 +146,8 @@
       // 出品フォーム
       view.innerHTML = formHtml();
       view.querySelectorAll('[data-go]').forEach((row) => {
-        row.addEventListener('click', () => {
+        row.addEventListener('click', (e) => {
+          e.preventDefault(); // <a>のデフォルト遷移は抑止(SPAのクライアント遷移を模す)
           if (row.dataset.go === '/sell/categories') state.picked = [];
           go(row.dataset.go);
         });
