@@ -40,6 +40,17 @@
       'アウトドア・釣り・旅行用品': { 'フィッシング': ['釣り仕掛け・仕掛け用品', 'ルアー用品'] },
       'レディース': { 'アクセサリー': ['ピアス'] },
     };
+    // 実サイト同様、前方一致する似た名前が多数並ぶ(「DAIWA」を正確に選べる必要がある)
+    const BRANDS = [
+      ['M&M DYE WORKS', 'エムアンドエムダイワークス'],
+      ['DAIWA Industry', 'ダイワインダストリ'],
+      ['DAIWA CYCLE', 'ダイワサイクル'],
+      ['DAIWA', 'ダイワ'],
+      ['DAIWA PIER39', 'ダイワピア39'],
+      ['Daiwa Technical', 'ダイワテクニカル'],
+      ['大和玩具', 'ダイワガング／ダイワトーイ'],
+      ['大和書房', 'ダイワショボウ'],
+    ];
     const CONDITIONS = ['新品、未使用', '未使用に近い', '目立った傷や汚れなし', 'やや傷や汚れあり', '傷や汚れあり', '全体的に状態が悪い'];
     // 実サイトは3つのメルカリ便 + 「その他」配下に多数(ゆうメール/レターパック等)
     const SHIPPINGS = [
@@ -73,6 +84,11 @@
           <a href="#" class="cat-link" data-go="/sell/categories"><svg width="12" height="12"></svg>${state.category || 'カテゴリーを選択する'}</a>
         </div>
         <!-- 子spanでラップされた構造 -->
+        <!-- ブランド: 行のテキストが「選択してください」で他項目と紛れる。ラベルから辿れる必要がある -->
+        <div class="field">
+          <div class="lbl">ブランド <span style="font-size:11px;background:#eee;padding:1px 6px">任意</span></div>
+          <a href="#" data-go="/sell/brands"><span class="icon">＋</span>${state.brand || '選択してください'}</a>
+        </div>
         <div class="field">
           <div class="lbl">商品の状態</div>
           <a href="#" data-go="/sell/conditions"><span class="icon">＋</span><span>${state.condition || '商品の状態を選択する'}</span></a>
@@ -137,6 +153,31 @@
             }
           });
         });
+        return;
+      }
+      if (p.startsWith('/sell/brands')) {
+        // 検索欄に入力すると候補が絞られる。似た名前が多く並ぶのが要点
+        view.innerHTML = `<h1>ブランド</h1>
+          <input type="text" id="bq" placeholder="ブランド名を入力" style="width:100%;padding:10px;font-size:16px">
+          <div id="blist"></div>`;
+        const renderList = () => {
+          const q = document.getElementById('bq').value.trim().toLowerCase();
+          const hits = q
+            ? BRANDS.filter((b) => (b[0] + b[1]).toLowerCase().includes(q))
+            : [];
+          document.getElementById('blist').innerHTML = hits
+            .map((b) => `<div class="brand-row" style="padding:12px;border-bottom:1px solid #eee;cursor:pointer">
+                 <div>${b[0]}</div><div style="font-size:12px;color:#666">${b[1]}</div></div>`)
+            .join('');
+          document.querySelectorAll('.brand-row').forEach((row, i) => {
+            row.addEventListener('click', () => {
+              state.brand = hits[i][0];
+              history.back();
+            });
+          });
+        };
+        // 実サイト同様、入力に対して非同期で絞り込む
+        document.getElementById('bq').addEventListener('input', () => setTimeout(renderList, 250));
         return;
       }
       if (p.startsWith('/sell/conditions')) {
@@ -211,6 +252,7 @@
       description: 'ハンドメイドのピアスです。\n\n#ハンドメイド #ピアス',
       price: 1200,
       tags: [],
+      brand: 'DAIWA',
       category: 'ハンドメイド・手芸 > アクセサリー・ジュエリー > ピアス',
       condition: '新品、未使用',
       shipping: 'ゆうゆうメルカリ便',
@@ -237,6 +279,10 @@
           '商品の状態が確定した': row('/sell/conditions').includes('新品、未使用'),
           '配送の方法が「更新する」で確定した': row('/sell/shipping_methods').includes('ゆうゆうメルカリ便'),
           '配送料の負担が先に選ばれた': document.getElementById('payer')?.value === '送料込み(出品者負担)',
+          // 「DAIWA Industry」等ではなく「DAIWA」が正確に選ばれること
+          'ブランドが正確に選ばれた': row('/sell/brands').includes('DAIWA')
+            && !row('/sell/brands').includes('Industry')
+            && !row('/sell/brands').includes('CYCLE'),
           '写真3枚がプレビューされた': document.querySelectorAll('#previews img').length === 3,
         };
       },

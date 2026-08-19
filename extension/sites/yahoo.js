@@ -43,6 +43,11 @@ window.XW3.registerSite({
       cascade: true, // 「アウトドア、釣り、旅行用品 > 釣り > ...」の3〜5階層(ボトムシートでドリルダウン)
       labels: ['カテゴリ'],
     },
+    // 任意項目。UIの形式は未検証(ボトムシート想定)。外れる場合は実DOMを見て調整する
+    brand: {
+      kind: 'choice',
+      labels: ['ブランド'],
+    },
     condition: {
       kind: 'choice',
       labels: ['商品の状態', '商品状態'],

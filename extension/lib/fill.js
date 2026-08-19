@@ -449,7 +449,9 @@ window.XW3 = window.XW3 || {};
     }
     for (const label of spec.labels || []) {
       for (const node of labelNodes(label)) {
-        const el = node.closest(ROW_SEL) || resolveFromLabel(node, ROW_SEL);
+        // ラベルの「後ろにある行」を優先する。祖先(フィールド枠)を先に掴むと
+        // クリックしても何も起きないため
+        const el = resolveFromLabel(node, ROW_SEL) || node.closest(ROW_SEL);
         if (el) targets.push(el);
         // ラベルの隣にある行そのもの(div行のレイアウト)
         const scope = node.parentElement;
@@ -519,11 +521,16 @@ window.XW3 = window.XW3 || {};
 
     // 1) 値そのものを持つ要素を探し、クリックできる祖先を押す
     //    (選択肢の行がプレーンなdivで実装されていても拾える)
+    //    「DAIWA」を選びたいのに「DAIWA Industry」が先に並ぶことがあるため、
+    //    見つかった順ではなくスコアが最良のものを選ぶ
     const direct = labelNodes(wanted).filter(inMainContent);
     if (direct.length) {
-      const node = direct[0];
-      (node.closest(ROW_SEL) || node).click();
-      return { ok: true, chosen: (ownText(node) || wanted).slice(0, 40) };
+      const best = pickBest(direct.map((n) => ownText(n) || n.textContent), wanted);
+      if (best) {
+        const node = direct[best.index];
+        (node.closest(ROW_SEL) || node).click();
+        return { ok: true, chosen: (ownText(node) || wanted).slice(0, 40) };
+      }
     }
 
     // 2) クリック可能な要素をスコアリングして選ぶ
@@ -555,6 +562,21 @@ window.XW3 = window.XW3 || {};
     if (!opened.ok) {
       // 開けていない状態で選択肢を探すと無関係な候補を拾うため、ここで打ち切る
       return [{ part: parts[0], ok: false, reason: opened.reason }];
+    }
+
+    // ブランドのように「検索して候補から選ぶ」ページ
+    if (spec.search) {
+      const input = await waitFor(
+        () =>
+          [...document.querySelectorAll('input[type="text"], input[type="search"], input:not([type])')]
+            .filter((el) => isVisible(el) && inMainContent(el))[0] || null,
+        3000
+      );
+      if (!input) {
+        return [{ part: parts[0], ok: false, reason: '検索欄が見つかりません' }];
+      }
+      await fillText(input, parts[0]);
+      await sleep(900); // 候補の絞り込みを待つ
     }
 
     const out = [];
@@ -739,8 +761,10 @@ window.XW3 = window.XW3 || {};
     const F = site.fields || {};
     const isFormReady = () => (F.title ? !!findField(F.title) : true);
 
+    // 画面に出てくる順(依存関係の順)に処理する
     const CHOICE_ORDER = [
       ['category', 'カテゴリ'],
+      ['brand', 'ブランド'],
       ['condition', '商品の状態'],
       ['shippingPayer', '送料の負担'],
       ['shipping', '配送の方法'],

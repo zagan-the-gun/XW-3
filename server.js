@@ -41,7 +41,7 @@ const STATIC_TYPES = {
 };
 
 const PRODUCT_FIELDS = [
-  'name', 'price', 'title', 'description', 'tags', 'notes', 'sites',
+  'name', 'price', 'title', 'description', 'tags', 'brand', 'notes', 'sites',
   // 旧形式。読み出し時に sites 配下へ移行するため受け入れる
   'condition', 'categoryMemo', 'shippingMemo',
 ];
@@ -147,6 +147,8 @@ function normalizeProduct(input, prev) {
     ? p.tags.map((t) => String(t).replace(/^#/, '').trim()).filter(Boolean).slice(0, 50)
     : [];
   p.notes = String(p.notes || '');
+  // ブランドは両サイトで同じ表記のため共通で持つ(任意項目)
+  p.brand = String(p.brand || '');
 
   // カテゴリ・状態・配送はサイトごとに選択肢の文言が違う(拡張がそのまま選択に使う値)。
   // 旧形式の共通フィールドは両サイトへ引き継いでから捨てる。
@@ -387,6 +389,7 @@ function buildListing(p, settings) {
           : p.description,
       tags: key === 'mercari' ? [] : tags, // Yahoo!フリマはタグ専用欄(#なし)
       price: p.price,
+      brand: p.brand,
       category: s.category,
       condition: s.condition,
       shipping: s.shipping,

@@ -42,6 +42,15 @@ window.XW3.registerSite({
       openTexts: ['カテゴリーを選択する', 'カテゴリーを選択'],
       path: '/sell/categories',
     },
+    // ブランドは任意項目。検索欄に入力して候補から選ぶページ。
+    // 行のテキストが「選択してください」で他項目と紛れるため openTexts は使わず
+    // ラベル「ブランド」から後ろの行を辿る
+    brand: {
+      kind: 'page',
+      search: true,
+      labels: ['ブランド'],
+      path: '/sell/brands',
+    },
     condition: {
       kind: 'page',
       labels: ['商品の状態'],
