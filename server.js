@@ -177,6 +177,11 @@ function readBody(req, limit) {
 }
 
 async function readJsonBody(req) {
+  // text/plainフォーム偽装によるクロスサイトからの書き込み(CSRF)を遮断する
+  const ct = String(req.headers['content-type'] || '').toLowerCase();
+  if (!ct.includes('application/json')) {
+    throw Object.assign(new Error('Content-Type must be application/json'), { status: 415 });
+  }
   const body = JSON.parse((await readBody(req, MAX_JSON_BYTES)).toString('utf8') || '{}');
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
     throw Object.assign(new Error('body must be a JSON object'), { status: 400 });
@@ -199,6 +204,7 @@ function sendJson(res, status, obj) {
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(body),
+    'X-Content-Type-Options': 'nosniff',
   });
   res.end(body);
 }
@@ -555,7 +561,11 @@ function servePhoto(req, res, segments) {
   stream.on('open', () => {
     // 並べ替えでファイル名と中身の対応が変わるためキャッシュさせない
     // (古いキャッシュを掴むと、ドラッグで運ばれる画像バイトまで古くなる)
-    res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store' });
+    res.writeHead(200, {
+      'Content-Type': type,
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+    });
     stream.pipe(res);
   });
 }
