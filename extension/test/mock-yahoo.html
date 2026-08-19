@@ -119,7 +119,7 @@
   </div>
 
   <!-- 絶対に押してはいけないものを置く。候補送りで踏まないことを検証する -->
-  <div class="card">
+  <div class="card" id="danger-card">
     <a href="/sell" id="go-sell">出品トップへ戻る</a>
     <a href="/help/rules" id="rules">出品禁止物・出品ルール</a>
     <button type="submit" id="submit-listing">出品する</button>
@@ -194,11 +194,20 @@
           if (!next) {
             setPicker('category', catPath.join(' > '));
             sheet.classList.remove('open');
+            rerenderDangerCard(); // 再描画で無関係な要素が「新しく」なる
           } else {
             openSheet('category');
           }
         });
       });
+    }
+    // 実サイト(React)は再描画で要素そのものが作り直される。
+    // 「新しく現れた要素」だけを候補と判断すると無関係な要素を掴んでしまうため、
+    // カテゴリ確定時に危険な要素のカードを作り直して再現する
+    function rerenderDangerCard() {
+      const card = document.getElementById('danger-card');
+      card.innerHTML = card.innerHTML; // 同じ内容で作り直す = 要素は別物になる
+      wireDanger();
     }
     function setPicker(kind, value) {
       const el = document.querySelector(`.picker[data-sheet="${kind}"]`);
@@ -263,12 +272,15 @@
     });
 
     // 危険な要素を踏んだら分かるようにする(踏んではいけない)
-    document.querySelectorAll('#go-sell, #rules, #submit-listing, #save-draft').forEach((el) => {
-      el.addEventListener('click', (e) => {
-        e.preventDefault();
-        window.__dangerClicked = (window.__dangerClicked || []).concat(el.id);
+    function wireDanger() {
+      document.querySelectorAll('#go-sell, #rules, #submit-listing, #save-draft').forEach((el) => {
+        el.addEventListener('click', (e) => {
+          e.preventDefault();
+          window.__dangerClicked = (window.__dangerClicked || []).concat(el.id);
+        });
       });
-    });
+    }
+    wireDanger();
     document.querySelectorAll('#help-cancel, #help-fee').forEach((a) => {
       a.addEventListener('click', (e) => {
         e.preventDefault();

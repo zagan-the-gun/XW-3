@@ -232,6 +232,18 @@ window.XW3 = window.XW3 || {};
     });
   }
 
+  // 候補リストは入力欄の真下に重なって出る。位置で絞ると無関係な要素を排除できる。
+  // (画面の再描画で「新しく現れた要素」は当てにならないため、位置の条件が要る)
+  function looksLikeSuggestion(el, input) {
+    const a = input.getBoundingClientRect();
+    const b = el.getBoundingClientRect();
+    if (b.width === 0 || b.height === 0) return false;
+    if (b.top < a.bottom - 8) return false; // 入力欄より下にある
+    if (b.top > a.bottom + 400) return false; // 近くにある
+    const overlap = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+    return overlap > Math.min(a.width, b.width) * 0.4; // 横位置が重なる
+  }
+
   // 入力欄に打ち込むと候補が出るタイプ(Yahoo!フリマのブランド)
   async function chooseByAutocomplete(spec, wanted) {
     const input = findField({ ...spec, kind: 'text' });
@@ -246,31 +258,32 @@ window.XW3 = window.XW3 || {};
     let scope = input;
     for (let i = 0; i < 3 && scope.parentElement; i += 1) scope = scope.parentElement;
 
-    // まず文字列が一致する候補を探す(これが本筋)
+    // 1) 文字列が一致する候補(これが本筋)
     const node = await waitFor(
       () => findVisibleOption(wanted, input, scope) || findVisibleOption(wanted, input),
       3000
     );
-    if (node) {
-      if (!safeClick(node.closest(ROW_SEL) || node)) {
-        return { ok: false, reason: '押せない要素でした(安全のため中止)' };
-      }
+    if (node && safeClick(node.closest(ROW_SEL) || node)) {
       await sleep(250);
       return { ok: true, chosen: (ownText(node) || wanted).slice(0, 40), via: '候補選択' };
     }
 
-    // 一致しなければ「新しく現れた行の先頭」を選ぶ。
-    // 打った文字と完全には合わない表記(例: daiwa → DAIWA（釣り）)を拾うため。
-    // 何も現れていないときは押さない(無関係な要素を踏むのを防ぐ)
-    const fresh = suggestionRows().filter((el) => !before.has(el));
-    const top = fresh.find((el) => input.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)
-      || fresh[0];
-    if (!top) return { ok: false, reason: `候補に「${wanted}」が出ませんでした` };
-    if (!safeClick(top.closest(ROW_SEL) || top)) {
-      return { ok: false, reason: '押せない要素でした(安全のため中止)' };
+    // 2) 一致しない/押せなかった場合は「入力欄の真下に新しく出た行」の先頭。
+    //    打った文字と表記が違う候補(例: daiwa → DAIWA（釣り）)を拾うため。
+    //    位置の条件を満たすものが無ければ何も押さない
+    const fresh = suggestionRows().filter(
+      (el) => !before.has(el) && looksLikeSuggestion(el, input)
+    );
+    for (const el of fresh) {
+      if (safeClick(el.closest(ROW_SEL) || el)) {
+        await sleep(250);
+        return { ok: true, chosen: (ownText(el) || wanted).slice(0, 40), via: '候補の先頭' };
+      }
     }
-    await sleep(250);
-    return { ok: true, chosen: (ownText(top) || wanted).slice(0, 40), via: '候補の先頭' };
+    return {
+      ok: false,
+      reason: node ? '候補を押せませんでした' : `候補に「${wanted}」が出ませんでした`,
+    };
   }
 
   // 開いたシート/モーダルを閉じる。失敗した項目のUIが残ると後続の操作を邪魔する。
@@ -1022,6 +1035,20 @@ window.XW3 = window.XW3 || {};
     return hits.filter((el) => !hits.some((o) => o !== el && el.contains(o))).pop() || null;
   }
 
+  // 反映が終わるまで(増加が止まるまで)待ってから枚数を数える。
+  // 途中で数えると「10枚投入したのに1枚」のような表示になる
+  async function waitPhotoCount(count, before, limit) {
+    if (!(await waitFor(() => count() > before, 4000))) return 0;
+    let last = count();
+    for (let i = 0; i < 12; i += 1) {
+      await sleep(250);
+      const now = count();
+      if (now === last) break;
+      last = now;
+    }
+    return Math.min(last - before, limit);
+  }
+
   async function injectPhotos(files, spec = {}, root = document) {
     if (!files.length) return { ok: false, reason: '写真がありません' };
     // file inputは display:none のことが多いので可視判定しない
@@ -1046,12 +1073,9 @@ window.XW3 = window.XW3 || {};
       } catch {
         /* 次の手段へ */
       }
-      // アップロード完了までに時間がかかるサイトもあるので少し待つ
-      const grew = await waitFor(() => count() > before, 3000);
-      if (grew) {
-        const added = Math.min(count() - before, files.length);
-        return { ok: true, method: `file-input(${added}枚を確認)` };
-      }
+      // アップロード完了までに時間がかかるサイトもあるので反映が止まるまで待つ
+      const added = await waitPhotoCount(count, before, files.length);
+      if (added) return { ok: true, method: `file-input(${added}枚を確認)` };
     }
 
     // 2) ドロップゾーンへ drop を合成(react-dropzone系はこちらが確実)
@@ -1061,11 +1085,8 @@ window.XW3 = window.XW3 || {};
       for (const type of ['dragenter', 'dragover', 'drop']) {
         zone.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }));
       }
-      const grew = await waitFor(() => count() > before, 4000);
-      if (grew) {
-        const added = Math.min(count() - before, files.length);
-        return { ok: true, method: `drop(${added}枚を確認)` };
-      }
+      const added = await waitPhotoCount(count, before, files.length);
+      if (added) return { ok: true, method: `drop(${added}枚を確認)` };
     }
 
     // ファイルは渡せたが画面への反映を確認できないケース。
