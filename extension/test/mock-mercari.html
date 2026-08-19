@@ -41,7 +41,12 @@
       'レディース': { 'アクセサリー': ['ピアス'] },
     };
     const CONDITIONS = ['新品、未使用', '未使用に近い', '目立った傷や汚れなし', 'やや傷や汚れあり', '傷や汚れあり', '全体的に状態が悪い'];
-    const SHIPPINGS = ['らくらくメルカリ便', 'ゆうゆうメルカリ便', '梱包・発送たのメル便', '未定'];
+    // 実サイトは3つのメルカリ便 + 「その他」配下に多数(ゆうメール/レターパック等)
+    const SHIPPINGS = [
+      'らくらくメルカリ便', 'ゆうゆうメルカリ便', '梱包・発送たのメル便',
+      'ゆうメール', 'レターパック', '郵便(定形、定形外、書留など)', 'クロネコヤマト',
+      'ゆうパック', 'クリックポスト', 'ゆうパケット', '未定',
+    ];
 
     function go(path) { history.pushState({}, '', path); render(); }
 
@@ -80,11 +85,14 @@
             <option>着払い(購入者負担)</option>
           </select>
         </div>
+        <!-- 実サイト同様、配送料の負担を選ぶまで配送の方法の行は出さない -->
         <div class="field">
           <div class="lbl">配送の方法</div>
-          <div class="row" data-go="/sell/shipping_methods">
-            <span>${state.shipping || '配送の方法を選択する'}</span><span class="val">›</span>
-          </div>
+          ${document.getElementById('payer')?.value || state.payer
+            ? `<div class="row" data-go="/sell/shipping_methods">
+                 <span>${state.shipping || '配送の方法を選択する'}</span><span class="val">›</span>
+               </div>`
+            : '<span style="color:#888">配送料の負担を選択してください</span>'}
         </div>
         <div class="field">
           <div class="lbl">発送元の地域</div>
@@ -131,15 +139,32 @@
         });
         return;
       }
-      if (p.startsWith('/sell/conditions') || p.startsWith('/sell/shipping_methods')) {
-        const isCond = p.startsWith('/sell/conditions');
-        view.innerHTML = listHtml(isCond ? '商品の状態' : '配送の方法', isCond ? CONDITIONS : SHIPPINGS);
+      if (p.startsWith('/sell/conditions')) {
+        // 選ぶと即フォームへ戻るタイプ
+        view.innerHTML = listHtml('商品の状態', CONDITIONS);
         view.querySelectorAll('li').forEach((li) => {
           li.addEventListener('click', () => {
-            if (isCond) state.condition = li.textContent;
-            else state.shipping = li.textContent;
+            state.condition = li.textContent;
             history.back();
           });
+        });
+        return;
+      }
+      if (p.startsWith('/sell/shipping_methods')) {
+        // 実サイト同様、選んだあと「更新する」で確定してから戻るタイプ
+        let tmp = state.shipping;
+        view.innerHTML = `<h1>配送の方法</h1>
+          <div>${SHIPPINGS.map((s, i) => `
+            <label style="display:block;padding:10px;border-bottom:1px solid #eee">
+              <input type="radio" name="ship" value="${s}"> ${s}
+            </label>`).join('')}</div>
+          <button id="commit" style="margin-top:16px;padding:10px 24px">更新する</button>`;
+        view.querySelectorAll('input[name=ship]').forEach((r) => {
+          r.addEventListener('change', () => { tmp = r.value; });
+        });
+        document.getElementById('commit').addEventListener('click', () => {
+          state.shipping = tmp;
+          history.back();
         });
         return;
       }
@@ -152,6 +177,12 @@
           go(row.dataset.go);
         });
       });
+      // 配送料の負担を選んだら配送の方法の行を出す(依存関係の再現)
+      const payerSel = document.getElementById('payer');
+      if (payerSel) {
+        payerSel.value = state.payer || '';
+        payerSel.addEventListener('change', () => { state.payer = payerSel.value; render(); });
+      }
       const fi = document.getElementById('photo-input');
       const add = (files) => {
         for (const f of files) {
@@ -191,7 +222,7 @@
         'タイトル': 'ハンドメイド 花モチーフ ピアス ブルー',
         '価格': '1200',
         '商品の状態': '新品、未使用',
-        '配送の方法': 'ゆうゆうメルカリ便',
+        '配送の方法(1/2) ゆうゆうメルカリ便': 'ゆうゆうメルカリ便',
         '送料の負担': '送料込み(出品者負担)',
         '発送元の地域': '東京都',
         '発送までの日数': '1~2日で発送',
@@ -204,7 +235,8 @@
           '説明文が入った': document.querySelector('textarea').value.includes('ハンドメイドのピアス'),
           'カテゴリ3階層が確定した': row('/sell/categories').includes('ハンドメイド・手芸 > アクセサリー・ジュエリー > ピアス'),
           '商品の状態が確定した': row('/sell/conditions').includes('新品、未使用'),
-          '配送の方法が確定した': row('/sell/shipping_methods').includes('ゆうゆうメルカリ便'),
+          '配送の方法が「更新する」で確定した': row('/sell/shipping_methods').includes('ゆうゆうメルカリ便'),
+          '配送料の負担が先に選ばれた': document.getElementById('payer')?.value === '送料込み(出品者負担)',
           '写真3枚がプレビューされた': document.querySelectorAll('#previews img').length === 3,
         };
       },

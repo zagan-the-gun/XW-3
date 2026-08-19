@@ -470,14 +470,40 @@ window.XW3 = window.XW3 || {};
 
   async function openSelectionPage(spec, isOpen) {
     const targets = openTargets(spec);
+    if (!targets.length) {
+      return { ok: false, reason: '選択ページを開く行が見つかりません' };
+    }
+    const startHref = location.href;
     // まず素直な click()、それで開かなければマウスイベント列を送る
     for (const send of [(el) => el.click(), clickWithMouseEvents]) {
       for (const el of targets) {
+        if (!el.isConnected) continue; // 前のクリックでDOMが差し替わった要素は触らない
         send(el);
-        if (await waitFor(isOpen, 1200)) return true;
+        if (await waitFor(isOpen, 1200)) return { ok: true };
+        // 想定外のページへ移動したら、以降のクリックは誤操作になるので即中止する
+        if (location.href !== startHref) {
+          return { ok: false, reason: `別のページ(${location.pathname})へ移動しました` };
+        }
       }
     }
-    return false;
+    return { ok: false, reason: '行をクリックしても選択ページが開きませんでした' };
+  }
+
+  // 「更新する」等でページの選択を確定する必要がある画面向け。
+  // 出品そのものを実行するボタンは絶対に押さない。
+  const CONFIRM_TEXTS = ['更新する', '決定', '完了', '保存', '適用', 'この内容で登録'];
+  const NEVER_CLICK = /出品|購入|支払|削除/;
+
+  function confirmButton() {
+    for (const t of CONFIRM_TEXTS) {
+      for (const node of labelNodes(t)) {
+        if (!inMainContent(node)) continue;
+        const el = node.closest(ROW_SEL) || node;
+        if (NEVER_CLICK.test(el.textContent || '')) continue;
+        return el;
+      }
+    }
+    return null;
   }
 
   // ヘッダー・ナビ・フッターの要素は選択肢ではないので候補から外す
@@ -525,15 +551,10 @@ window.XW3 = window.XW3 || {};
       ? () => location.pathname.startsWith(spec.path)
       : () => collectOptionNodes().length > 0;
 
-    if (!(await openSelectionPage(spec, isOpen))) {
+    const opened = await openSelectionPage(spec, isOpen);
+    if (!opened.ok) {
       // 開けていない状態で選択肢を探すと無関係な候補を拾うため、ここで打ち切る
-      return [
-        {
-          part: parts[0],
-          ok: false,
-          reason: `選択ページ(${spec.path || '選択UI'})を開けませんでした`,
-        },
-      ];
+      return [{ part: parts[0], ok: false, reason: opened.reason }];
     }
 
     const out = [];
@@ -543,12 +564,21 @@ window.XW3 = window.XW3 || {};
       if (!r.ok) break;
       await sleep(450);
     }
-    // フォームに戻る(自動で戻らない実装のときは履歴を戻す)
+
+    // フォームへ戻る。選択しただけでは確定しない画面(「更新する」ボタンがある)にも対応する
     if (isFormReady) {
-      const back = await waitFor(isFormReady, 2500);
+      let back = await waitFor(isFormReady, 1500);
+      if (!back) {
+        const btn = confirmButton();
+        if (btn) {
+          btn.click();
+          back = await waitFor(isFormReady, 2500);
+          out.push({ part: btn.textContent.trim().slice(0, 12), ok: !!back, chosen: '確定' });
+        }
+      }
       if (!back) {
         history.back();
-        await waitFor(isFormReady, 3000);
+        await waitFor(isFormReady, 2500);
       }
     }
     return out;
@@ -718,17 +748,29 @@ window.XW3 = window.XW3 || {};
       ['shipDays', '発送までの日数'],
     ];
 
-    // 別ページ遷移が絡む項目を先に済ませる
-    // (万一クライアント遷移でなく再読み込みが起きても、入力済みテキストを失わないため)
+    // 選択項目はCHOICE_ORDERの順に処理する。
+    // 配送の方法は配送料の負担を選ぶまで行が出ないなど依存関係があるため、
+    // ページ遷移型と画面内選択を混ぜて「表示される順」に埋めるのが要点。
+    // テキストと写真は全ての遷移が終わったあとに入れる。
     if (opts.choices !== false) {
       for (const [key, label] of CHOICE_ORDER) {
         const spec = F[key];
         const value = listing[key];
-        if (!spec || spec.kind !== 'page' || !value) continue;
-        const steps = await fillViaPage(spec, value, isFormReady);
-        steps.forEach((r, i) =>
-          push(steps.length > 1 ? `${label}(${i + 1}/${steps.length}) ${r.part}` : label, r)
-        );
+        if (!spec || !value) continue;
+
+        if (spec.kind === 'page') {
+          const steps = await fillViaPage(spec, value, isFormReady);
+          steps.forEach((r, i) =>
+            push(steps.length > 1 ? `${label}(${i + 1}/${steps.length}) ${r.part}` : label, r)
+          );
+        } else if (spec.cascade) {
+          const parts = String(value).split(/\s*[>›»]\s*/).filter(Boolean);
+          const steps = await chooseCascade(findChoiceBlock(spec), parts);
+          if (!steps.length) push(label, { ok: false, reason: '項目が見つかりません' });
+          steps.forEach((r, i) => push(`${label}(${i + 1}/${parts.length}) ${r.part}`, r));
+        } else {
+          push(label, await chooseInBlock(findChoiceBlock(spec), value));
+        }
         await sleep(300);
       }
     }
@@ -749,25 +791,6 @@ window.XW3 = window.XW3 || {};
 
     if (opts.photos !== false && files?.length) {
       push(`写真(${files.length}枚)`, await injectPhotos(files, site.photo || {}));
-    }
-
-    if (opts.choices !== false) {
-      for (const [key, label] of CHOICE_ORDER) {
-        const spec = F[key];
-        const value = listing[key];
-        if (!spec || spec.kind === 'page' || !value) continue;
-
-        if (spec.cascade) {
-          // 階層カテゴリ。上位から順に選び、次の階層が現れるのを待つ
-          const parts = String(value).split(/\s*[>›»]\s*/).filter(Boolean);
-          const steps = await chooseCascade(findChoiceBlock(spec), parts);
-          if (!steps.length) push(label, { ok: false, reason: '項目が見つかりません' });
-          steps.forEach((r, i) => push(`${label}(${i + 1}/${parts.length}) ${r.part}`, r));
-        } else {
-          push(label, await chooseInBlock(findChoiceBlock(spec), value));
-        }
-        await sleep(250);
-      }
     }
 
     return results;
