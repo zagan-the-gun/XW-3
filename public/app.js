@@ -347,6 +347,7 @@ function renderDetail() {
       </div>
       ${copyRowHtml('y-price', '価格', String(p.price))}
       ${pickRowHtml('カテゴリ', y.category)}
+      ${pickRowHtml('ブランド(任意)', y.brand)}
       ${pickRowHtml('商品の状態', y.condition)}
       ${pickRowHtml('配送方法', y.shipping)}
       ${pickRowHtml('発送までの日数', y.shipDays)}
@@ -519,7 +520,7 @@ function renderEditForm(isNew = false) {
           <div class="field-note">メルカリ→説明文末尾にそのまま結合 / Yahoo→専用欄用に#なしでコピー(30文字×20個まで)</div></div>
         <label>ブランド</label>
         <div><input id="f-brand" value="${esc(p.brand || '')}" placeholder="DAIWA(任意・空ならスキップ)">
-          <div class="field-note">メルカリのみ(Yahoo!フリマにブランド項目はありません)。出品ページの検索欄に入力して候補から選ばれます</div></div>
+          <div class="field-note">両サイト共通。出品ページで入力すると出る候補から選ばれます(候補の主表記に合わせて入力: 例 ダイワ ではなく DAIWA)</div></div>
         <label>メモ</label>
         <div><input id="f-notes" value="${esc(p.notes)}" placeholder="自分用(原価・梱包資材・在庫場所など)">
           <div class="field-note">出品フォームには入りません</div></div>

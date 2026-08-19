@@ -454,7 +454,7 @@ function buildListing(p) {
           : p.description,
       tags: key === 'mercari' ? [] : tags, // Yahoo!フリマはタグ専用欄(#なし)
       price: p.price,
-      brand: key === 'mercari' ? p.brand : '', // Yahoo!フリマにブランド項目はない
+      brand: p.brand,
       category: s.category,
       condition: s.condition,
       shipping: s.shipping,

@@ -48,7 +48,13 @@ window.XW3.registerSite({
       // 一覧の先頭に戻してから階層を辿る
       resetTexts: ['他のカテゴリから選ぶ'],
     },
-    // ブランドの項目は存在しないため定義しない
+    // 任意項目。入力欄に打ち込むと候補が出るので、そこから選ぶ
+    // (メルカリは専用ページでの検索なのでUIが違う)
+    brand: {
+      kind: 'autocomplete',
+      labels: ['ブランド'],
+      placeholders: ['ブランドを入力'],
+    },
     condition: {
       kind: 'choice',
       labels: ['商品の状態', '商品状態'],

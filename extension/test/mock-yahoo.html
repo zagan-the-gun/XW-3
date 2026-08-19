@@ -54,6 +54,13 @@
     <div class="lbl">カテゴリ<span class="req">必須</span></div>
     <div class="picker" data-sheet="category">選択してください（必須）</div>
   </div>
+  <!-- ブランド: 入力すると候補が出るタイプ。似た名前が並ぶ -->
+  <div class="card">
+    <div class="lbl">ブランド</div>
+    <input type="text" id="brand" placeholder="ブランドを入力して選択（任意）" autocomplete="off">
+    <div id="brand-list"></div>
+  </div>
+
   <div class="card">
     <div class="lbl">商品の状態<span class="req">必須</span></div>
     <div class="picker" data-sheet="condition">選択してください（必須）</div>
@@ -219,6 +226,29 @@
       tag.value = '';
     });
 
+    // ブランド: 入力に応じて候補を出し、クリックで確定する
+    const BRANDS = [
+      ['DAIWA PIER39', 'ダイワ ピアサーティンナイン'],
+      ['DAIWA（釣り）', 'ダイワ'],
+      ['DAIWA LIFESTYLE', 'ダイワライフスタイル'],
+    ];
+    const brandInput = document.getElementById('brand');
+    const brandList = document.getElementById('brand-list');
+    brandInput.addEventListener('input', () => {
+      const q = brandInput.value.trim().toLowerCase();
+      const hits = q ? BRANDS.filter((b) => (b[0] + b[1]).toLowerCase().includes(q)) : [];
+      brandList.innerHTML = hits.map((b) =>
+        `<div class="brand-opt" style="padding:10px;border-bottom:1px solid #eee;cursor:pointer">
+           <div>${b[0]}</div><div style="font-size:12px;color:#666">${b[1]}</div></div>`).join('');
+      [...brandList.querySelectorAll('.brand-opt')].forEach((el, i) => {
+        el.addEventListener('click', () => {
+          brandInput.value = hits[i][0];
+          brandInput.dataset.selected = hits[i][0];
+          brandList.innerHTML = '';
+        });
+      });
+    });
+
     // 配送方法: 行をクリックで開閉するアコーディオン。ラジオを選んでも自動では閉じない
     const shipHead = document.getElementById('ship-head');
     const shipBody = document.getElementById('ship-body');
@@ -268,6 +298,7 @@
       price: 1980,
       tags: ['ダイワ', 'クーラーボックス', '3Dプリント'],
       category: 'アウトドア、釣り、旅行用品 > 釣り > フィッシングツール > 釣り用クーラーボックス',
+      brand: 'daiwa',
       condition: '未使用',
       shipping: 'おてがる配送（日本郵便）',
       shipDays: '3~7日',
@@ -287,6 +318,8 @@
         'カテゴリ4階層が確定した':
           document.querySelector('.picker[data-sheet="category"]').dataset.value ===
           'アウトドア、釣り、旅行用品 > 釣り > フィッシングツール > 釣り用クーラーボックス',
+        'ブランドが候補から選ばれた(DAIWA（釣り）)':
+          document.getElementById('brand').dataset.selected === 'DAIWA（釣り）',
         'div製シートで状態が選べた':
           document.querySelector('.picker[data-sheet="condition"]').dataset.value === '未使用',
         '写真3枚がdropで入った': document.querySelectorAll('#shots img').length === 3,

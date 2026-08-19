@@ -188,19 +188,43 @@ window.XW3 = window.XW3 || {};
   // 画面に出ている選択肢から wanted に一致するものを探す。
   // role や class に依存せず「その文字列を持つ要素」で探すため、
   // プレーンなdivで組まれたボトムシート(Yahoo!フリマ)でも拾える。
-  function findVisibleOption(wanted, excludeIn) {
-    const inSheet = (n) => isVisible(n) && inMainContent(n) && !(excludeIn && excludeIn.contains(n));
-    const byText = labelNodes(wanted).filter(inSheet);
+  function findVisibleOption(wanted, excludeIn, root = document) {
+    const inSheet = (n) =>
+      isVisible(n) && inMainContent(n) && !(excludeIn && (excludeIn === n || excludeIn.contains(n)));
+    const byText = labelNodes(wanted, root).filter(inSheet);
     if (byText.length) {
       const best = pickBest(byText.map((n) => ownText(n) || n.textContent), wanted);
       if (best) return byText[best.index];
     }
-    const nodes = collectOptionNodes().filter(inSheet);
+    const nodes = collectOptionNodes(root).filter(inSheet);
     if (nodes.length) {
       const best = pickBest(nodes.map((n) => n.textContent), wanted);
       if (best) return nodes[best.index];
     }
     return null;
+  }
+
+  // 入力欄に打ち込むと候補が出るタイプ(Yahoo!フリマのブランド)。
+  // 候補は入力欄の近くに出るので、まず周辺だけを探して誤爆を防ぐ
+  async function chooseByAutocomplete(spec, wanted) {
+    const input = findField({ ...spec, kind: 'text' });
+    if (!input) return { ok: false, reason: '入力欄が見つかりません' };
+    await fillText(input, wanted);
+    await sleep(250);
+
+    let scope = input;
+    for (let i = 0; i < 3 && scope.parentElement; i += 1) scope = scope.parentElement;
+
+    const node = await waitFor(
+      () => findVisibleOption(wanted, input, scope) || findVisibleOption(wanted, input),
+      3000
+    );
+    if (!node) return { ok: false, reason: `候補に「${wanted}」が出ませんでした` };
+    if (!safeClick(node.closest(ROW_SEL) || node)) {
+      return { ok: false, reason: '押せない要素でした(安全のため中止)' };
+    }
+    await sleep(250);
+    return { ok: true, chosen: (ownText(node) || wanted).slice(0, 40), via: '候補選択' };
   }
 
   // 開いたシート/モーダルを閉じる。失敗した項目のUIが残ると後続の操作を邪魔する。
@@ -978,7 +1002,10 @@ window.XW3 = window.XW3 || {};
       }
       // アップロード完了までに時間がかかるサイトもあるので少し待つ
       const grew = await waitFor(() => count() > before, 3000);
-      if (grew) return { ok: true, method: `file-input(${count() - before}枚を確認)` };
+      if (grew) {
+        const added = Math.min(count() - before, files.length);
+        return { ok: true, method: `file-input(${added}枚を確認)` };
+      }
     }
 
     // 2) ドロップゾーンへ drop を合成(react-dropzone系はこちらが確実)
@@ -989,7 +1016,10 @@ window.XW3 = window.XW3 || {};
         zone.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }));
       }
       const grew = await waitFor(() => count() > before, 4000);
-      if (grew) return { ok: true, method: `drop(${count() - before}枚を確認)` };
+      if (grew) {
+        const added = Math.min(count() - before, files.length);
+        return { ok: true, method: `drop(${added}枚を確認)` };
+      }
     }
 
     // ファイルは渡せたが画面への反映を確認できないケース。
@@ -1121,6 +1151,8 @@ window.XW3 = window.XW3 || {};
           steps.forEach((r, i) =>
             push(steps.length > 1 ? `${label}(${i + 1}/${steps.length}) ${r.part}` : label, r)
           );
+        } else if (spec.kind === 'autocomplete') {
+          push(label, await chooseByAutocomplete(spec, value));
         } else if (spec.cascade) {
           const parts = String(value).split(/\s*[>›»]\s*/).filter(Boolean);
           const steps = await chooseCascadeAny(spec, parts);
