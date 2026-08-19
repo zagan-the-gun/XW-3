@@ -404,6 +404,104 @@ window.XW3 = window.XW3 || {};
     return null;
   }
 
+  // ---------- 別ページで選ぶ項目(メルカリのカテゴリー/状態/配送の方法) ----------
+  // メルカリはこの3項目がフォーム内のプルダウンではなく専用ページへの遷移になっている
+  // (/sell/categories など)。SPAのクライアント遷移なので入力済みの内容は保持される。
+
+  async function waitFor(fn, timeout = 4000, interval = 120) {
+    const limit = Date.now() + timeout;
+    for (;;) {
+      const v = fn();
+      if (v) return v;
+      if (Date.now() > limit) return null;
+      await sleep(interval);
+    }
+  }
+
+  function clickableCandidates(root = document) {
+    return [...root.querySelectorAll('a, button, [role="button"], [role="option"], [role="menuitem"], li, label')]
+      .filter((el) => {
+        if (!isVisible(el)) return false;
+        const t = el.textContent.trim();
+        return t && t.length <= 30;
+      });
+  }
+
+  // 行はリンク(<a>)のこともプレーンなdivのこともあるため、
+  // 文字列が一致した要素の「クリックできそうな親」まで遡ってクリックする
+  const ROW_SEL = 'a, button, [role="button"], li, [class*="row"], [class*="Row"], [tabindex]';
+
+  async function openSelectionPage(spec) {
+    // 「カテゴリーを選択する」のような文言を持つ行
+    for (const t of spec.openTexts || []) {
+      for (const node of labelNodes(t)) {
+        (node.closest(ROW_SEL) || node).click();
+        return true;
+      }
+    }
+    // ラベル行から辿る(すでに値が入っていて openText が出ていない場合など)
+    for (const label of spec.labels || []) {
+      for (const node of labelNodes(label)) {
+        const clickable = node.closest(ROW_SEL) || resolveFromLabel(node, ROW_SEL);
+        if (clickable) {
+          clickable.click();
+          return true;
+        }
+        // ラベルの隣にある行そのものをクリックする(div行のレイアウト)
+        const scope = node.parentElement;
+        const row = scope && [...scope.children].find((c) => c !== node && isVisible(c));
+        if (row) {
+          row.click();
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  async function pickOnPage(wanted) {
+    const cands = await waitFor(() => {
+      const c = clickableCandidates();
+      return c.length ? c : null;
+    }, 5000);
+    if (!cands) return { ok: false, reason: '選択肢が表示されませんでした' };
+    const best = pickBest(cands.map((c) => c.textContent), wanted);
+    if (!best) {
+      const sample = cands.slice(0, 6).map((c) => c.textContent.trim().slice(0, 16)).join(' / ');
+      return { ok: false, reason: `該当なし(候補: ${sample})` };
+    }
+    cands[best.index].click();
+    return { ok: true, chosen: best.text };
+  }
+
+  async function fillViaPage(spec, value, isFormReady) {
+    const parts = spec.cascade
+      ? String(value).split(/\s*[>›»]\s*/).filter(Boolean)
+      : [String(value)];
+    if (!(await openSelectionPage(spec))) {
+      return [{ part: parts[0], ok: false, reason: '選択ページを開けませんでした' }];
+    }
+    if (spec.path) await waitFor(() => location.pathname.startsWith(spec.path), 4000);
+    else await sleep(500);
+
+    const out = [];
+    for (const part of parts) {
+      const r = await pickOnPage(part);
+      out.push({ part, ...r });
+      if (!r.ok) break;
+      await sleep(450);
+    }
+    // フォームに戻る(自動で戻らない実装のときは履歴を戻す)
+    if (isFormReady) {
+      const back = await waitFor(isFormReady, 2500);
+      if (!back) {
+        history.back();
+        await waitFor(isFormReady, 3000);
+      }
+    }
+    return out;
+  }
+
   // ---------- 写真の投入 ----------
   function firstMatch(selectors, root, allowHidden = false) {
     for (const s of selectors || []) {
@@ -548,6 +646,31 @@ window.XW3 = window.XW3 || {};
     const results = [];
     const push = (label, r) => results.push({ label, ...r });
     const F = site.fields || {};
+    const isFormReady = () => (F.title ? !!findField(F.title) : true);
+
+    const CHOICE_ORDER = [
+      ['category', 'カテゴリ'],
+      ['condition', '商品の状態'],
+      ['shippingPayer', '送料の負担'],
+      ['shipping', '配送の方法'],
+      ['shipFrom', '発送元の地域'],
+      ['shipDays', '発送までの日数'],
+    ];
+
+    // 別ページ遷移が絡む項目を先に済ませる
+    // (万一クライアント遷移でなく再読み込みが起きても、入力済みテキストを失わないため)
+    if (opts.choices !== false) {
+      for (const [key, label] of CHOICE_ORDER) {
+        const spec = F[key];
+        const value = listing[key];
+        if (!spec || spec.kind !== 'page' || !value) continue;
+        const steps = await fillViaPage(spec, value, isFormReady);
+        steps.forEach((r, i) =>
+          push(steps.length > 1 ? `${label}(${i + 1}/${steps.length}) ${r.part}` : label, r)
+        );
+        await sleep(300);
+      }
+    }
 
     if (opts.text !== false) {
       for (const [key, label] of [['title', 'タイトル'], ['description', '説明文'], ['price', '価格']]) {
@@ -568,25 +691,20 @@ window.XW3 = window.XW3 || {};
     }
 
     if (opts.choices !== false) {
-      // カテゴリは階層。上位から順に選び、次の階層が現れるのを待つ
-      if (F.category && listing.category) {
-        const parts = String(listing.category).split(/\s*[>›»／/]\s*/).filter(Boolean);
-        const block = findChoiceBlock(F.category);
-        const steps = await chooseCascade(block, parts);
-        steps.forEach((r, i) => push(`カテゴリ(${i + 1}/${parts.length}) ${r.part}`, r));
-        if (!steps.length) push('カテゴリ', { ok: false, reason: '項目が見つかりません' });
-      }
-      for (const [key, label] of [
-        ['condition', '商品の状態'],
-        ['shippingPayer', '送料の負担'],
-        ['shipping', '配送の方法'],
-        ['shipFrom', '発送元の地域'],
-        ['shipDays', '発送までの日数'],
-      ]) {
+      for (const [key, label] of CHOICE_ORDER) {
         const spec = F[key];
         const value = listing[key];
-        if (!spec || !value) continue;
-        push(label, await chooseInBlock(findChoiceBlock(spec), value));
+        if (!spec || spec.kind === 'page' || !value) continue;
+
+        if (spec.cascade) {
+          // 階層カテゴリ。上位から順に選び、次の階層が現れるのを待つ
+          const parts = String(value).split(/\s*[>›»]\s*/).filter(Boolean);
+          const steps = await chooseCascade(findChoiceBlock(spec), parts);
+          if (!steps.length) push(label, { ok: false, reason: '項目が見つかりません' });
+          steps.forEach((r, i) => push(`${label}(${i + 1}/${parts.length}) ${r.part}`, r));
+        } else {
+          push(label, await chooseInBlock(findChoiceBlock(spec), value));
+        }
         await sleep(250);
       }
     }

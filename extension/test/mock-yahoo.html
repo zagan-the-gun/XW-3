@@ -65,14 +65,15 @@
     <div class="cdd" data-list="cond"><button type="button" class="trigger">選択してください</button><ul role="listbox" hidden></ul></div>
   </div>
 
-  <div class="field">
-    <div class="lbl">送料負担</div>
-    <div class="cdd" data-list="payer"><button type="button" class="trigger">選択してください</button><ul role="listbox" hidden></ul></div>
-  </div>
+  <!-- 実サイトに「配送料の負担」項目は存在しない(全品出品者負担・全国一律・匿名配送) -->
 
+  <!-- 配送方法: アコーディオン+ラジオ(業者2択) -->
   <div class="field">
     <div class="lbl">配送方法</div>
-    <div class="cdd" data-list="ship"><button type="button" class="trigger">選択してください</button><ul role="listbox" hidden></ul></div>
+    <div>
+      <label><input type="radio" name="carrier" value="yamato">おてがる配送（ヤマト運輸）</label><br>
+      <label><input type="radio" name="carrier" value="jp">おてがる配送（日本郵便）</label>
+    </div>
   </div>
 
   <div class="field">
@@ -96,11 +97,10 @@
   <div id="report">起動中…</div>
 
   <script>
+    // 実サイトの表記(2026-08時点): 状態は5段階で1番目は「未使用」(「新品、」が付かない)
     const LISTS = {
-      cond: ['新品、未使用', '未使用に近い', '目立った傷や汚れなし', 'やや傷や汚れあり', '傷や汚れあり', '全体的に状態が悪い'],
-      payer: ['送料込み(出品者負担)', '着払い(購入者負担)'],
-      ship: ['おてがる配送(ヤマト運輸)', 'おてがる配送(日本郵便)', 'ゆうパケットポストmini', 'その他(送料込み)'],
-      days: ['1~2日で発送', '2~3日で発送', '4~7日で発送'],
+      cond: ['未使用', '未使用に近い', '目立った傷や汚れなし', 'やや傷や汚れあり', '傷や汚れあり'],
+      days: ['1~2日', '2~3日', '3~7日'],
     };
 
     // 単段のカスタムドロップダウン
@@ -121,9 +121,10 @@
     });
 
     // 階層カテゴリ: 1段選ぶと同じリストが次の階層に置き換わる
+    // 実サイトのカテゴリは読点区切り(メルカリは中黒)。3〜5階層
     const TREE = {
-      'ハンドメイド': { 'アクセサリー': ['ピアス', 'ネックレス'] },
-      'スポーツ・レジャー': { 'フィッシング': ['ルアー用品', 'その他'] },
+      'ハンドメイド、手作り': { 'アクセサリー': ['ピアス', 'ネックレス'] },
+      'アウトドア、釣り、旅行用品': { '釣り': ['その他釣り具', 'ルアー、フライ'] },
     };
     const cat = document.getElementById('cat');
     const catBtn = cat.querySelector('.trigger');
@@ -181,28 +182,27 @@
       description: '3Dプリンタ製の中蓋トレーです。\n\n深さ15mm・エア穴付き',
       price: 1980,
       tags: ['ダイワ', 'クーラーボックス', '3Dプリント'],
-      category: 'スポーツ・レジャー > フィッシング > その他',
-      condition: '新品、未使用',
-      shipping: 'おてがる配送(日本郵便)',
-      shippingPayer: '送料込み(出品者負担)',
-      shipDays: '1~2日で発送',
+      category: 'アウトドア、釣り、旅行用品 > 釣り > その他釣り具',
+      condition: '未使用',
+      shipping: 'おてがる配送（日本郵便）',
+      shipDays: '1~2日',
       shipFrom: '東京都',
     }, {
       expect: {
         'タイトル': 'ダイワ クールライン 800Xシリーズ用 中蓋トレー',
         '価格': '1980',
-        '商品の状態': '新品、未使用',
-        '送料の負担': '送料込み(出品者負担)',
-        '配送の方法': 'おてがる配送(日本郵便)',
+        '商品の状態': '未使用',
+        '配送の方法': 'おてがる配送（日本郵便）',
         '発送元の地域': '東京都',
-        '発送までの日数': '1~2日で発送',
+        '発送までの日数': '1~2日',
       },
       checkDom: () => ({
         '説明文が入った': document.querySelector('textarea').value.includes('中蓋トレー'),
         'タグ3個がチップ化された': document.querySelectorAll('#chips .chip').length === 3,
-        'カテゴリ3階層が選択された': document.getElementById('catpath').textContent === 'スポーツ・レジャー > フィッシング > その他',
+        'カテゴリ3階層が選択された': document.getElementById('catpath').textContent === 'アウトドア、釣り、旅行用品 > 釣り > その他釣り具',
         '写真3枚がdropで入った': document.querySelectorAll('#shots img').length === 3,
-        'カスタムDDの状態が反映された': document.querySelector('.cdd[data-list=cond]').dataset.value === '新品、未使用',
+        'ボトムシートで状態が反映された': document.querySelector('.cdd[data-list=cond]').dataset.value === '未使用',
+        'ラジオで配送業者が選択された': document.querySelector('input[name=carrier]:checked')?.value === 'jp',
       }),
     });
   </script>

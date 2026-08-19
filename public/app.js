@@ -283,10 +283,14 @@ function renderDetail() {
       ${copyRowHtml('y-price', '価格', String(p.price))}
       ${pickRowHtml('カテゴリ', y.category)}
       ${pickRowHtml('商品の状態', y.condition)}
-      ${pickRowHtml('配送の方法', y.shipping)}
-      ${pickRowHtml('送料の負担', y.shippingPayer)}
+      ${pickRowHtml('配送方法', y.shipping)}
       ${pickRowHtml('発送までの日数', y.shipDays)}
       ${pickRowHtml('発送元の地域', y.shipFrom)}
+      <div class="copy-row">
+        <div class="label">送料</div>
+        <div class="value"><span class="hint">全商品が出品者負担・全国一律・匿名配送で固定(選択項目なし)</span></div>
+        <div class="meta"></div>
+      </div>
     </section>
 
     <section class="card">
@@ -454,14 +458,15 @@ function renderEditForm(isNew = false) {
       </div>
 
       <h3 style="margin:18px 0 12px">メルカリの選択項目
-        <span class="hint">拡張がこの文言でプルダウンを選びます。画面の表記そのままで入力</span>
+        <span class="hint">拡張がこの文言で選択します。画面の表記そのままで入力</span>
       </h3>
       <div class="form-grid">
-        <label>カテゴリ</label>
-        <div><input id="f-m-category" value="${esc(p.sites?.mercari?.category || '')}" placeholder="ハンドメイド > アクセサリー > ピアス">
-          <div class="field-note">階層は「&gt;」で区切る(上位から順に選択されます)</div></div>
+        <label>カテゴリー</label>
+        <div><input id="f-m-category" value="${esc(p.sites?.mercari?.category || '')}" placeholder="ハンドメイド・手芸 > 雑貨・ステーショナリー > ブックカバー">
+          <div class="field-note">階層は「&gt;」で区切る(上位から順に選択されます)。区切り以外の「・」はカテゴリ名の一部</div></div>
         <label>商品の状態</label>
-        <div><input id="f-m-condition" value="${esc(p.sites?.mercari?.condition || '')}" placeholder="新品、未使用"></div>
+        <div><input id="f-m-condition" value="${esc(p.sites?.mercari?.condition || '')}" placeholder="新品、未使用">
+          <div class="field-note">新品、未使用 / 未使用に近い / 目立った傷や汚れなし / やや傷や汚れあり / 傷や汚れあり / 全体的に状態が悪い</div></div>
         <label>配送の方法</label>
         <div><input id="f-m-shipping" value="${esc(p.sites?.mercari?.shipping || '')}" placeholder="ゆうゆうメルカリ便"></div>
       </div>
@@ -469,11 +474,14 @@ function renderEditForm(isNew = false) {
       <h3 style="margin:18px 0 12px">Yahoo!フリマの選択項目</h3>
       <div class="form-grid">
         <label>カテゴリ</label>
-        <div><input id="f-y-category" value="${esc(p.sites?.yahoo?.category || '')}" placeholder="ハンドメイド > アクセサリー > ピアス"></div>
+        <div><input id="f-y-category" value="${esc(p.sites?.yahoo?.category || '')}" placeholder="アウトドア、釣り、旅行用品 > 釣り > その他釣り具">
+          <div class="field-note">メルカリとはカテゴリ体系も区切り文字も違います(こちらは「、」)</div></div>
         <label>商品の状態</label>
-        <div><input id="f-y-condition" value="${esc(p.sites?.yahoo?.condition || '')}" placeholder="新品、未使用"></div>
-        <label>配送の方法</label>
-        <div><input id="f-y-shipping" value="${esc(p.sites?.yahoo?.shipping || '')}" placeholder="おてがる配送(日本郵便)"></div>
+        <div><input id="f-y-condition" value="${esc(p.sites?.yahoo?.condition || '')}" placeholder="未使用">
+          <div class="field-note">未使用 / 未使用に近い / 目立った傷や汚れなし / やや傷や汚れあり / 傷や汚れあり(5段階。「新品、」は付きません)</div></div>
+        <label>配送方法</label>
+        <div><input id="f-y-shipping" value="${esc(p.sites?.yahoo?.shipping || '')}" placeholder="おてがる配送（日本郵便）">
+          <div class="field-note">おてがる配送（ヤマト運輸） / おてがる配送（日本郵便）の2択</div></div>
       </div>
       <div class="form-actions">
         <button class="btn primary" id="btn-save">保存</button>
@@ -528,18 +536,26 @@ function renderEditForm(isNew = false) {
 // ---------- 共通設定 ----------
 // 送料負担・発送までの日数・発送元は商品ごとに変わらないため、商品データから分離する
 
-const SETTING_FIELDS = [
-  ['shippingPayer', '送料の負担', '送料込み(出品者負担)'],
-  ['shipDays', '発送までの日数', '1~2日で発送'],
-  ['shipFrom', '発送元の地域', '東京都'],
-];
+// Yahoo!フリマには「配送料の負担」項目がない(全商品が出品者負担で固定)ため出さない。
+// 発送までの日数はサイトで表記が違う(メルカリ「1~2日で発送」/ Yahoo「1~2日」)。
+const SETTING_FIELDS = {
+  mercari: [
+    ['shippingPayer', '配送料の負担', '送料込み(出品者負担)'],
+    ['shipDays', '発送までの日数', '1~2日で発送'],
+    ['shipFrom', '発送元の地域', '東京都'],
+  ],
+  yahoo: [
+    ['shipDays', '発送までの日数', '1~2日'],
+    ['shipFrom', '発送元の地域', '東京都'],
+  ],
+};
 
 async function renderSettingsForm() {
   const s = await api('/api/settings');
   const siteBlock = (key, label) => `
     <h3 style="margin:18px 0 12px">${label}</h3>
     <div class="form-grid">
-      ${SETTING_FIELDS.map(([field, name, ph]) => `
+      ${SETTING_FIELDS[key].map(([field, name, ph]) => `
         <label>${name}</label>
         <div><input id="s-${key}-${field}" value="${esc(s[key]?.[field] || '')}" placeholder="${esc(ph)}"></div>
       `).join('')}
@@ -569,7 +585,7 @@ async function renderSettingsForm() {
     const body = {};
     for (const key of ['mercari', 'yahoo']) {
       body[key] = {};
-      for (const [field] of SETTING_FIELDS) body[key][field] = $(`#s-${key}-${field}`).value;
+      for (const [field] of SETTING_FIELDS[key]) body[key][field] = $(`#s-${key}-${field}`).value;
     }
     await api('/api/settings', { method: 'PUT', body: JSON.stringify(body) });
     toast('共通設定を保存しました');
