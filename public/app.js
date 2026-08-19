@@ -17,7 +17,7 @@ const SELL_URLS = {
 // サーバ側PHOTO_EXTSと同じ許可リスト(MIMEでなく拡張子で判定を揃える)
 const PHOTO_EXT_RE = /\.(jpe?g|jfif|png|webp|gif|avif)$/i;
 
-const state = { products: [], current: null, config: {}, filter: '' };
+const state = { products: [], current: null, config: {}, choices: {}, filter: '' };
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const listEl = $('#product-list');
@@ -106,6 +106,43 @@ function wireCopyButton(btn, getText) {
     } catch (e) {
       toast(`コピー失敗: ${e.message}`);
     }
+  });
+}
+
+// ---------- 選択式フィールド ----------
+// 既知の選択肢はプルダウンで選ぶ。一覧になければ「その他(自由入力)」で任意の文字列も入れられる。
+// 値の保持は常に input 側なので、保存処理は自由入力のときと同じ。
+
+function choiceFieldHtml(inputId, options, value, note = '') {
+  const opts = options || [];
+  const known = opts.includes(value);
+  const isOther = !!value && !known;
+  return `
+    <div>
+      <select data-choice-for="${inputId}">
+        <option value="">(未設定)</option>
+        ${opts.map((o) => `<option${known && o === value ? ' selected' : ''}>${esc(o)}</option>`).join('')}
+        <option value="__other__"${isOther ? ' selected' : ''}>その他(自由入力)</option>
+      </select>
+      <input id="${inputId}" value="${esc(value)}"${isOther ? '' : ' hidden'} placeholder="画面の表記どおりに入力">
+      ${note ? `<div class="field-note">${esc(note)}</div>` : ''}
+    </div>`;
+}
+
+function wireChoiceFields() {
+  mainEl.querySelectorAll('[data-choice-for]').forEach((sel) => {
+    const input = mainEl.querySelector(`#${sel.dataset.choiceFor}`);
+    if (!input) return;
+    sel.addEventListener('change', () => {
+      if (sel.value === '__other__') {
+        input.hidden = false;
+        input.value = '';
+        input.focus();
+      } else {
+        input.hidden = true;
+        input.value = sel.value;
+      }
+    });
   });
 }
 
@@ -470,10 +507,9 @@ function renderEditForm(isNew = false) {
         <div><input id="f-m-category" value="${esc(p.sites?.mercari?.category || '')}" placeholder="ハンドメイド・手芸 > 雑貨・ステーショナリー > ブックカバー">
           <div class="field-note">階層は「&gt;」で区切る(上位から順に選択されます)。区切り以外の「・」はカテゴリ名の一部</div></div>
         <label>商品の状態</label>
-        <div><input id="f-m-condition" value="${esc(p.sites?.mercari?.condition || '')}" placeholder="新品、未使用">
-          <div class="field-note">新品、未使用 / 未使用に近い / 目立った傷や汚れなし / やや傷や汚れあり / 傷や汚れあり / 全体的に状態が悪い</div></div>
+        ${choiceFieldHtml('f-m-condition', state.choices.mercari?.condition, p.sites?.mercari?.condition || '')}
         <label>配送の方法</label>
-        <div><input id="f-m-shipping" value="${esc(p.sites?.mercari?.shipping || '')}" placeholder="ゆうゆうメルカリ便"></div>
+        ${choiceFieldHtml('f-m-shipping', state.choices.mercari?.shipping, p.sites?.mercari?.shipping || '')}
       </div>
 
       <h3 style="margin:18px 0 12px">Yahoo!フリマの選択項目</h3>
@@ -482,11 +518,10 @@ function renderEditForm(isNew = false) {
         <div><input id="f-y-category" value="${esc(p.sites?.yahoo?.category || '')}" placeholder="アウトドア、釣り、旅行用品 > 釣り > その他釣り具">
           <div class="field-note">メルカリとはカテゴリ体系も区切り文字も違います(こちらは「、」)</div></div>
         <label>商品の状態</label>
-        <div><input id="f-y-condition" value="${esc(p.sites?.yahoo?.condition || '')}" placeholder="未使用">
-          <div class="field-note">未使用 / 未使用に近い / 目立った傷や汚れなし / やや傷や汚れあり / 傷や汚れあり(5段階。「新品、」は付きません)</div></div>
+        ${choiceFieldHtml('f-y-condition', state.choices.yahoo?.condition, p.sites?.yahoo?.condition || '',
+          '5段階。メルカリと違い「新品、」は付きません')}
         <label>配送方法</label>
-        <div><input id="f-y-shipping" value="${esc(p.sites?.yahoo?.shipping || '')}" placeholder="おてがる配送（日本郵便）">
-          <div class="field-note">おてがる配送（ヤマト運輸） / おてがる配送（日本郵便）の2択</div></div>
+        ${choiceFieldHtml('f-y-shipping', state.choices.yahoo?.shipping, p.sites?.yahoo?.shipping || '')}
       </div>
       <div class="form-actions">
         <button class="btn primary" id="btn-save">保存</button>
@@ -494,6 +529,8 @@ function renderEditForm(isNew = false) {
       </div>
     </section>
   `;
+
+  wireChoiceFields();
 
   $('#btn-cancel').addEventListener('click', () => {
     if (isNew) {
@@ -546,13 +583,14 @@ function renderEditForm(isNew = false) {
 // 発送までの日数はサイトで表記が違う(メルカリ「1~2日で発送」/ Yahoo「1~2日」)。
 const SETTING_FIELDS = {
   mercari: [
-    ['shippingPayer', '配送料の負担', '送料込み(出品者負担)'],
-    ['shipDays', '発送までの日数', '1~2日で発送'],
-    ['shipFrom', '発送元の地域', '東京都'],
+    ['shippingPayer', '配送料の負担'],
+    ['shipDays', '発送までの日数'],
+    ['shipFrom', '発送元の地域'],
   ],
+  // Yahoo!フリマには配送料の負担の項目がない(全品出品者負担)
   yahoo: [
-    ['shipDays', '発送までの日数', '1~2日'],
-    ['shipFrom', '発送元の地域', '東京都'],
+    ['shipDays', '発送までの日数'],
+    ['shipFrom', '発送元の地域'],
   ],
 };
 
@@ -561,9 +599,9 @@ async function renderSettingsForm() {
   const siteBlock = (key, label) => `
     <h3 style="margin:18px 0 12px">${label}</h3>
     <div class="form-grid">
-      ${SETTING_FIELDS[key].map(([field, name, ph]) => `
+      ${SETTING_FIELDS[key].map(([field, name]) => `
         <label>${name}</label>
-        <div><input id="s-${key}-${field}" value="${esc(s[key]?.[field] || '')}" placeholder="${esc(ph)}"></div>
+        ${choiceFieldHtml(`s-${key}-${field}`, state.choices[key]?.[field], s[key]?.[field] || '')}
       `).join('')}
     </div>`;
 
@@ -581,6 +619,8 @@ async function renderSettingsForm() {
       </div>
     </section>
   `;
+
+  wireChoiceFields();
 
   $('#btn-settings-cancel').addEventListener('click', () => {
     if (state.current) renderDetail();
@@ -625,6 +665,7 @@ window.addEventListener('unhandledrejection', (e) => {
 
 (async () => {
   state.config = await api('/api/config').catch(() => ({}));
+  state.choices = await api('/api/choices').catch(() => ({}));
   await loadProducts(false);
   if (state.products.length > 0) openProduct(state.products[0].slug);
 })().catch((e) => toast(`読み込み失敗: ${e.message}`));

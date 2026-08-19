@@ -48,6 +48,44 @@ const PRODUCT_FIELDS = [
 const SITE_KEYS = ['mercari', 'yahoo'];
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 
+const PREFECTURES = [
+  '北海道', '青森県', '岩手県', '宮城県', '秋田県', '山形県', '福島県',
+  '茨城県', '栃木県', '群馬県', '埼玉県', '千葉県', '東京都', '神奈川県',
+  '新潟県', '富山県', '石川県', '福井県', '山梨県', '長野県',
+  '岐阜県', '静岡県', '愛知県', '三重県',
+  '滋賀県', '京都府', '大阪府', '兵庫県', '奈良県', '和歌山県',
+  '鳥取県', '島根県', '岡山県', '広島県', '山口県',
+  '徳島県', '香川県', '愛媛県', '高知県',
+  '福岡県', '佐賀県', '長崎県', '熊本県', '大分県', '宮崎県', '鹿児島県', '沖縄県',
+];
+
+// 各サイトの選択肢(2026-08時点の実表記)。UIのプルダウンに出し、
+// 拡張はこの文字列でそのまま選択する。サイト側の変更時はここだけ直せばよい。
+// 一覧になければ「その他(自由入力)」で任意の文字列を入れられる。
+const CHOICES = {
+  mercari: {
+    condition: [
+      '新品、未使用', '未使用に近い', '目立った傷や汚れなし',
+      'やや傷や汚れあり', '傷や汚れあり', '全体的に状態が悪い',
+    ],
+    shippingPayer: ['送料込み(出品者負担)', '着払い(購入者負担)'],
+    shipping: [
+      'らくらくメルカリ便', 'ゆうゆうメルカリ便', '梱包・発送たのメル便',
+      'ゆうメール', 'レターパック', '郵便(定形、定形外、書留など)', 'クロネコヤマト',
+      'ゆうパック', 'クリックポスト', 'ゆうパケット', '未定',
+    ],
+    shipDays: ['1~2日で発送', '2~3日で発送', '4~7日で発送'],
+    shipFrom: PREFECTURES,
+  },
+  yahoo: {
+    // Yahoo!フリマは5段階で「新品、」が付かない。配送料の負担は項目自体がない
+    condition: ['未使用', '未使用に近い', '目立った傷や汚れなし', 'やや傷や汚れあり', '傷や汚れあり'],
+    shipping: ['おてがる配送（ヤマト運輸）', 'おてがる配送（日本郵便）'],
+    shipDays: ['1~2日', '2~3日', '3~7日'],
+    shipFrom: PREFECTURES,
+  },
+};
+
 // ---------- ユーティリティ ----------
 
 function sanitizeFolderName(name) {
@@ -549,6 +587,11 @@ async function handleApi(req, res, segments, url) {
   // /api/config
   if (segments[1] === 'config' && req.method === 'GET') {
     return sendJson(res, 200, { photoPathPrefix: PHOTO_PATH_PREFIX, productsDir: PRODUCTS_DIR });
+  }
+
+  // /api/choices — 選択項目の候補(UIのプルダウン用)
+  if (segments[1] === 'choices' && req.method === 'GET') {
+    return sendJson(res, 200, CHOICES);
   }
 
   // /api/settings — 全商品共通の出品設定
