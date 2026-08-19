@@ -204,6 +204,11 @@ function normalizeProduct(input, prev) {
       category: String(s.category ?? s.categoryMemo ?? legacy.category ?? ''),
       condition: String(s.condition ?? legacy.condition ?? ''),
       shipping: String(s.shipping ?? s.shippingMemo ?? legacy.shipping ?? ''),
+      // 以下は空なら共通設定(settings.json)の値を使う。受注製作と在庫品で
+      // 発送までの日数が変わるなど、商品ごとに上書きしたい場合に指定する
+      shipDays: String(s.shipDays || ''),
+      shippingPayer: String(s.shippingPayer || ''),
+      shipFrom: String(s.shipFrom || ''),
     };
   }
   delete p.categoryMemo;
@@ -212,28 +217,49 @@ function normalizeProduct(input, prev) {
   return p;
 }
 
-// 全商品に共通する出品設定(送料負担・発送日数・発送元)。商品ごとに変わらないため分離。
-function normalizeSettings(input) {
-  const s = typeof input === 'object' && input !== null ? input : {};
-  const site = (key) => {
-    const v = typeof s[key] === 'object' && s[key] !== null ? s[key] : {};
-    return {
-      shippingPayer: String(v.shippingPayer || ''),
-      shipDays: String(v.shipDays || ''),
-      shipFrom: String(v.shipFrom || ''),
-    };
-  };
-  const out = {};
-  for (const key of SITE_KEYS) out[key] = site(key);
-  return out;
-}
-
-async function readSettings() {
+// かつて共通設定(settings.json)に置いていた送料負担・発送日数・発送元を商品側へ移す。
+// 「どこで設定するのか分かりにくい」ため共通設定は廃止し、全て商品の編集画面に集約した。
+// 既存の値を失わないよう、一度だけ各商品の空欄へ写してからファイルを畳む。
+async function migrateLegacySettings() {
+  let legacy;
   try {
-    return normalizeSettings(await readJson(SETTINGS_FILE));
+    legacy = await readJson(SETTINGS_FILE);
   } catch {
-    return normalizeSettings(null);
+    return; // 既に移行済み、または元から存在しない
   }
+  const fields = ['shippingPayer', 'shipDays', 'shipFrom'];
+  let slugs;
+  try {
+    slugs = (await fs.readdir(PRODUCTS_DIR)).filter((e) => !e.startsWith('.'));
+  } catch {
+    return;
+  }
+  for (const slug of slugs) {
+    const file = path.join(productDir(slug), 'product.json');
+    let raw;
+    try {
+      raw = await readJson(file);
+    } catch {
+      continue;
+    }
+    const p = normalizeProduct(raw, null);
+    let changed = false;
+    for (const key of SITE_KEYS) {
+      for (const field of fields) {
+        if (!p.sites[key][field] && legacy[key]?.[field]) {
+          p.sites[key][field] = String(legacy[key][field]);
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      p.createdAt = raw.createdAt || null;
+      p.updatedAt = raw.updatedAt || null;
+      await writeJson(file, p);
+      console.log(`migrated legacy settings into: ${slug}`);
+    }
+  }
+  await fs.rename(SETTINGS_FILE, `${SETTINGS_FILE}.migrated`).catch(() => {});
 }
 
 function readBody(req, limit) {
@@ -412,12 +438,11 @@ async function listProducts() {
 
 // 各サイトの出品フォームへそのまま入る形に整形する。
 // UIのコピーボタンとChrome拡張の自動入力が同じ値を使うよう、ここが唯一の変換元。
-function buildListing(p, settings) {
+function buildListing(p) {
   const out = {};
   const tags = p.tags || [];
   for (const key of SITE_KEYS) {
     const s = p.sites[key];
-    const g = settings[key] || {};
     out[key] = {
       title: s.title || p.title || '',
       // メルカリはタグ専用欄がないため説明文の末尾に#付きで結合する
@@ -431,9 +456,9 @@ function buildListing(p, settings) {
       category: s.category,
       condition: s.condition,
       shipping: s.shipping,
-      shippingPayer: g.shippingPayer,
-      shipDays: g.shipDays,
-      shipFrom: g.shipFrom,
+      shippingPayer: s.shippingPayer,
+      shipDays: s.shipDays,
+      shipFrom: s.shipFrom,
     };
   }
   return out;
@@ -445,8 +470,7 @@ async function getProduct(slug) {
   const p = normalizeProduct(raw, null);
   p.createdAt = raw.createdAt || null;
   p.updatedAt = raw.updatedAt || null;
-  const [photos, settings] = await Promise.all([listPhotos(slug), readSettings()]);
-  return { ...p, slug, photos, listing: buildListing(p, settings) };
+  return { ...p, slug, photos: await listPhotos(slug), listing: buildListing(p) };
 }
 
 async function createProduct(input) {
@@ -592,18 +616,6 @@ async function handleApi(req, res, segments, url) {
   // /api/choices — 選択項目の候補(UIのプルダウン用)
   if (segments[1] === 'choices' && req.method === 'GET') {
     return sendJson(res, 200, CHOICES);
-  }
-
-  // /api/settings — 全商品共通の出品設定
-  if (segments[1] === 'settings' && segments.length === 2) {
-    if (req.method === 'GET') return sendJson(res, 200, await readSettings());
-    if (req.method === 'PUT') {
-      const body = await readJsonBody(req);
-      const settings = normalizeSettings(body);
-      await withLock('__settings__', () => writeJson(SETTINGS_FILE, settings));
-      return sendJson(res, 200, settings);
-    }
-    return sendJson(res, 405, { error: 'method not allowed' });
   }
 
   if (segments[1] !== 'products') {
@@ -753,6 +765,7 @@ async function main() {
   await fs.mkdir(PRODUCTS_DIR, { recursive: true });
   await seedSampleIfEmpty();
   await recoverTmpPhotos();
+  await migrateLegacySettings();
   server.listen(PORT, () => {
     console.log(`XW-3 listening on http://0.0.0.0:${PORT}  (data: ${DATA_DIR})`);
   });

@@ -113,20 +113,51 @@ function wireCopyButton(btn, getText) {
 // 既知の選択肢はプルダウンで選ぶ。一覧になければ「その他(自由入力)」で任意の文字列も入れられる。
 // 値の保持は常に input 側なので、保存処理は自由入力のときと同じ。
 
-function choiceFieldHtml(inputId, options, value, note = '') {
+function choiceFieldHtml(inputId, options, value, note = '', emptyLabel = '(未設定)') {
   const opts = options || [];
   const known = opts.includes(value);
   const isOther = !!value && !known;
   return `
     <div>
       <select data-choice-for="${inputId}">
-        <option value="">(未設定)</option>
+        <option value=""${!value ? ' selected' : ''}>${esc(emptyLabel)}</option>
         ${opts.map((o) => `<option${known && o === value ? ' selected' : ''}>${esc(o)}</option>`).join('')}
         <option value="__other__"${isOther ? ' selected' : ''}>その他(自由入力)</option>
       </select>
       <input id="${inputId}" value="${esc(value)}"${isOther ? '' : ' hidden'} placeholder="画面の表記どおりに入力">
       ${note ? `<div class="field-note">${esc(note)}</div>` : ''}
     </div>`;
+}
+
+// 発送に関する項目。以前は「共通設定」に分けていたが、どこで設定するのか
+// 分かりにくかったため商品ごとの設定に統合した
+const SHIP_FIELDS = [
+  ['shipDays', '発送までの日数'],
+  ['shippingPayer', '配送料の負担'],
+  ['shipFrom', '発送元の地域'],
+];
+
+function shipFieldsHtml(site, p) {
+  return SHIP_FIELDS.filter(([field]) => state.choices[site]?.[field])
+    .map(
+      ([field, name]) => `
+        <label>${name}</label>
+        ${choiceFieldHtml(
+          `f-${site === 'mercari' ? 'm' : 'y'}-${field}`,
+          state.choices[site][field],
+          p.sites?.[site]?.[field] || ''
+        )}`
+    )
+    .join('');
+}
+
+function shipValues(site) {
+  const out = {};
+  for (const [field] of SHIP_FIELDS) {
+    const el = $(`#f-${site === 'mercari' ? 'm' : 'y'}-${field}`);
+    if (el) out[field] = el.value;
+  }
+  return out;
 }
 
 function wireChoiceFields() {
@@ -510,6 +541,7 @@ function renderEditForm(isNew = false) {
         ${choiceFieldHtml('f-m-condition', state.choices.mercari?.condition, p.sites?.mercari?.condition || '')}
         <label>配送の方法</label>
         ${choiceFieldHtml('f-m-shipping', state.choices.mercari?.shipping, p.sites?.mercari?.shipping || '')}
+        ${shipFieldsHtml('mercari', p)}
       </div>
 
       <h3 style="margin:18px 0 12px">Yahoo!フリマの選択項目</h3>
@@ -522,6 +554,7 @@ function renderEditForm(isNew = false) {
           '5段階。メルカリと違い「新品、」は付きません')}
         <label>配送方法</label>
         ${choiceFieldHtml('f-y-shipping', state.choices.yahoo?.shipping, p.sites?.yahoo?.shipping || '')}
+        ${shipFieldsHtml('yahoo', p)}
       </div>
       <div class="form-actions">
         <button class="btn primary" id="btn-save">保存</button>
@@ -555,12 +588,14 @@ function renderEditForm(isNew = false) {
           category: $('#f-m-category').value,
           condition: $('#f-m-condition').value,
           shipping: $('#f-m-shipping').value,
+          ...shipValues('mercari'),
         },
         yahoo: {
           title: $('#f-y-title').value,
           category: $('#f-y-category').value,
           condition: $('#f-y-condition').value,
           shipping: $('#f-y-shipping').value,
+          ...shipValues('yahoo'),
         },
       },
     };
@@ -576,74 +611,7 @@ function renderEditForm(isNew = false) {
   }));
 }
 
-// ---------- 共通設定 ----------
-// 送料負担・発送までの日数・発送元は商品ごとに変わらないため、商品データから分離する
-
-// Yahoo!フリマには「配送料の負担」項目がない(全商品が出品者負担で固定)ため出さない。
-// 発送までの日数はサイトで表記が違う(メルカリ「1~2日で発送」/ Yahoo「1~2日」)。
-const SETTING_FIELDS = {
-  mercari: [
-    ['shippingPayer', '配送料の負担'],
-    ['shipDays', '発送までの日数'],
-    ['shipFrom', '発送元の地域'],
-  ],
-  // Yahoo!フリマには配送料の負担の項目がない(全品出品者負担)
-  yahoo: [
-    ['shipDays', '発送までの日数'],
-    ['shipFrom', '発送元の地域'],
-  ],
-};
-
-async function renderSettingsForm() {
-  const s = await api('/api/settings');
-  const siteBlock = (key, label) => `
-    <h3 style="margin:18px 0 12px">${label}</h3>
-    <div class="form-grid">
-      ${SETTING_FIELDS[key].map(([field, name]) => `
-        <label>${name}</label>
-        ${choiceFieldHtml(`s-${key}-${field}`, state.choices[key]?.[field], s[key]?.[field] || '')}
-      `).join('')}
-    </div>`;
-
-  mainEl.innerHTML = `
-    <div class="detail-head"><h2>共通設定</h2></div>
-    <section class="card">
-      <p class="hint" style="margin-bottom:6px">
-        全商品で共通の出品条件。拡張がこの文言でプルダウンを選ぶため、各サイトの画面表記そのままで入力してください。
-      </p>
-      ${siteBlock('mercari', 'メルカリ')}
-      ${siteBlock('yahoo', 'Yahoo!フリマ')}
-      <div class="form-actions">
-        <button class="btn primary" id="btn-settings-save">保存</button>
-        <button class="btn" id="btn-settings-cancel">閉じる</button>
-      </div>
-    </section>
-  `;
-
-  wireChoiceFields();
-
-  $('#btn-settings-cancel').addEventListener('click', () => {
-    if (state.current) renderDetail();
-    else mainEl.innerHTML = '<div class="empty">左のリストから商品を選択してください</div>';
-  });
-
-  $('#btn-settings-save').addEventListener('click', guard('保存失敗', async () => {
-    const body = {};
-    for (const key of ['mercari', 'yahoo']) {
-      body[key] = {};
-      for (const [field] of SETTING_FIELDS[key]) body[key][field] = $(`#s-${key}-${field}`).value;
-    }
-    await api('/api/settings', { method: 'PUT', body: JSON.stringify(body) });
-    toast('共通設定を保存しました');
-    if (state.current) await openProduct(state.current.slug);
-  }));
-}
-
 // ---------- 初期化 ----------
-
-$('#btn-settings').addEventListener('click', () => {
-  renderSettingsForm().catch((e) => toast(`設定の読み込み失敗: ${e.message}`));
-});
 
 $('#btn-new').addEventListener('click', () => {
   state.current = null;
