@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>mock: メルカリ風出品フォーム</title>
+  <style>
+    body { font-family: sans-serif; max-width: 760px; margin: 20px auto; padding: 0 16px; }
+    .field { margin: 14px 0; padding: 10px; border: 1px solid #ddd; border-radius: 8px; }
+    .lbl { font-weight: 600; margin-bottom: 4px; }
+    input, textarea, select { padding: 6px; font-size: 14px; }
+    input[type=text], input[type=number], textarea { width: 100%; }
+    textarea { height: 90px; }
+    #dropzone { border: 2px dashed #aaa; padding: 20px; text-align: center; color: #666; }
+    #previews img { width: 60px; height: 60px; object-fit: cover; margin: 4px; border: 1px solid #ccc; }
+    #report { position: fixed; left: 8px; bottom: 8px; width: 380px; max-height: 90vh; overflow: auto;
+      background: #111; color: #eee; font: 12px/1.5 monospace; padding: 10px; border-radius: 8px; }
+    #report .ok { color: #6f6; } #report .ng { color: #f77; }
+  </style>
+</head>
+<body>
+  <h1>mock: メルカリ風出品フォーム(検証用)</h1>
+  <p>実際のサイトのDOMは非公開のため、想定される構造でエンジンを検証する。</p>
+
+  <!-- 写真: 隠しfile input + ドロップゾーン -->
+  <div class="field">
+    <div class="lbl">出品する写真</div>
+    <input type="file" id="photo-input" accept="image/*" multiple style="display:none">
+    <div id="dropzone">ここに画像をドロップ</div>
+    <div id="previews"></div>
+  </div>
+
+  <!-- label[for] 形式 -->
+  <div class="field">
+    <label class="lbl" for="t">商品名</label>
+    <input type="text" id="t" maxlength="40">
+  </div>
+
+  <!-- 兄弟ブロック形式 -->
+  <div class="field">
+    <div class="lbl">商品の説明</div>
+    <div><textarea maxlength="1000"></textarea></div>
+  </div>
+
+  <!-- カテゴリー: 3段カスケード -->
+  <div class="field">
+    <span class="lbl">カテゴリー</span>
+    <div>
+      <select id="cat1">
+        <option value="">選択してください</option>
+        <option>レディース</option>
+        <option>ハンドメイド</option>
+        <option>スポーツ・レジャー</option>
+      </select>
+      <select id="cat2"><option value="">選択してください</option></select>
+      <select id="cat3"><option value="">選択してください</option></select>
+    </div>
+  </div>
+
+  <div class="field">
+    <div class="lbl">商品の状態</div>
+    <select id="cond">
+      <option value="">選択してください</option>
+      <option>新品、未使用</option>
+      <option>未使用に近い</option>
+      <option>目立った傷や汚れなし</option>
+      <option>やや傷や汚れあり</option>
+      <option>傷や汚れあり</option>
+      <option>全体的に状態が悪い</option>
+    </select>
+  </div>
+
+  <!-- ラジオ形式 -->
+  <div class="field">
+    <div class="lbl">配送料の負担</div>
+    <div>
+      <label><input type="radio" name="payer" value="seller">送料込み(出品者負担)</label>
+      <label><input type="radio" name="payer" value="buyer">着払い(購入者負担)</label>
+    </div>
+  </div>
+
+  <div class="field">
+    <div class="lbl">配送の方法</div>
+    <select id="ship">
+      <option value="">選択してください</option>
+      <option>らくらくメルカリ便</option>
+      <option>ゆうゆうメルカリ便</option>
+      <option>梱包・発送たのメル便</option>
+      <option>未定</option>
+    </select>
+  </div>
+
+  <div class="field">
+    <div class="lbl">発送元の地域</div>
+    <select id="from">
+      <option value="">選択してください</option>
+      <option>北海道</option><option>東京都</option><option>神奈川県</option><option>大阪府</option>
+    </select>
+  </div>
+
+  <div class="field">
+    <div class="lbl">発送までの日数</div>
+    <select id="days">
+      <option value="">選択してください</option>
+      <option>1~2日で発送</option>
+      <option>2~3日で発送</option>
+      <option>4~7日で発送</option>
+    </select>
+  </div>
+
+  <!-- label でラップした形式 -->
+  <div class="field">
+    <label class="lbl">販売価格
+      <input type="number" id="price">
+    </label>
+  </div>
+
+  <div id="report">起動中…</div>
+
+  <script>
+    // カスケードの中身(1段目→2段目→3段目)
+    const TREE = {
+      'ハンドメイド': { 'アクセサリー': ['ピアス', 'ネックレス', 'リング'], 'ファッション・小物': ['財布', 'バッグ'] },
+      'レディース': { 'アクセサリー': ['ピアス', 'ブレスレット'] },
+      'スポーツ・レジャー': { 'フィッシング': ['ルアー用品', 'その他'] },
+    };
+    const fill = (sel, items) => {
+      sel.innerHTML = '<option value="">選択してください</option>' +
+        items.map((i) => `<option>${i}</option>`).join('');
+    };
+    cat1.addEventListener('change', () => {
+      fill(cat2, Object.keys(TREE[cat1.value] || {}));
+      fill(cat3, []);
+    });
+    cat2.addEventListener('change', () => {
+      fill(cat3, (TREE[cat1.value] || {})[cat2.value] || []);
+    });
+
+    // 写真: file input と drop の両方を受ける(実サイトと同じ想定)
+    function addFiles(files) {
+      for (const f of files) {
+        const img = document.createElement('img');
+        img.className = 'thumbnail';
+        img.src = URL.createObjectURL(f);
+        img.alt = f.name;
+        previews.appendChild(img);
+      }
+    }
+    document.getElementById('photo-input').addEventListener('change', (e) => addFiles(e.target.files));
+    dropzone.addEventListener('dragover', (e) => e.preventDefault());
+    dropzone.addEventListener('drop', (e) => { e.preventDefault(); addFiles(e.dataTransfer.files); });
+    dropzone.addEventListener('click', () => document.getElementById('photo-input').click());
+  </script>
+
+  <script src="../lib/fill.js"></script>
+  <script src="../sites/mercari.js"></script>
+  <script src="harness.js"></script>
+  <script>
+    XW3TEST.run('mercari', {
+      title: 'ハンドメイド 花モチーフ ピアス ブルー',
+      description: 'ハンドメイドのピアスです。\n\n・サイズ: 約2cm\n\n#ハンドメイド #ピアス',
+      price: 1200,
+      tags: [],
+      category: 'ハンドメイド > アクセサリー > ピアス',
+      condition: '新品、未使用',
+      shipping: 'ゆうゆうメルカリ便',
+      shippingPayer: '送料込み(出品者負担)',
+      shipDays: '1~2日で発送',
+      shipFrom: '東京都',
+    }, {
+      expect: {
+        'タイトル': 'ハンドメイド 花モチーフ ピアス ブルー',
+        '価格': '1200',
+        'カテゴリ(3/3) ピアス': 'ピアス',
+        '商品の状態': '新品、未使用',
+        '送料の負担': '送料込み(出品者負担)',
+        '配送の方法': 'ゆうゆうメルカリ便',
+        '発送元の地域': '東京都',
+        '発送までの日数': '1~2日で発送',
+      },
+      checkDom: () => ({
+        '説明文がtextareaに入った': document.querySelector('textarea').value.includes('ハンドメイドのピアス'),
+        'カテゴリ3段が選択された': cat1.value === 'ハンドメイド' && cat2.value === 'アクセサリー' && cat3.value === 'ピアス',
+        'ラジオが選択された': document.querySelector('input[name=payer]:checked')?.value === 'seller',
+        '写真3枚がプレビューされた': previews.querySelectorAll('img').length === 3,
+      }),
+    });
+  </script>
+</body>
+</html>

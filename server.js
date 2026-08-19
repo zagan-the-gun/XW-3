@@ -41,9 +41,12 @@ const STATIC_TYPES = {
 };
 
 const PRODUCT_FIELDS = [
-  'name', 'price', 'title', 'description', 'tags',
-  'condition', 'categoryMemo', 'shippingMemo', 'notes', 'sites',
+  'name', 'price', 'title', 'description', 'tags', 'notes', 'sites',
+  // 旧形式。読み出し時に sites 配下へ移行するため受け入れる
+  'condition', 'categoryMemo', 'shippingMemo',
 ];
+const SITE_KEYS = ['mercari', 'yahoo'];
+const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 
 // ---------- ユーティリティ ----------
 
@@ -143,28 +146,54 @@ function normalizeProduct(input, prev) {
   p.tags = Array.isArray(p.tags)
     ? p.tags.map((t) => String(t).replace(/^#/, '').trim()).filter(Boolean).slice(0, 50)
     : [];
-  p.condition = String(p.condition || '');
-  p.categoryMemo = String(p.categoryMemo || '');
-  p.shippingMemo = String(p.shippingMemo || '');
   p.notes = String(p.notes || '');
-  const sites = typeof p.sites === 'object' && p.sites !== null ? p.sites : {};
-  p.sites = {
-    mercari: {
-      title: String(sites.mercari?.title || ''),
-      categoryMemo: String(sites.mercari?.categoryMemo || ''),
-    },
-    yahoo: {
-      title: String(sites.yahoo?.title || ''),
-      categoryMemo: String(sites.yahoo?.categoryMemo || ''),
-    },
+
+  // カテゴリ・状態・配送はサイトごとに選択肢の文言が違う(拡張がそのまま選択に使う値)。
+  // 旧形式の共通フィールドは両サイトへ引き継いでから捨てる。
+  const legacy = {
+    category: String(p.categoryMemo || ''),
+    condition: String(p.condition || ''),
+    shipping: String(p.shippingMemo || ''),
   };
-  // カテゴリは両サイトで体系が異なるためサイト別で持つ。旧形式(共通categoryMemo)は引き継ぐ
-  if (p.categoryMemo && !p.sites.mercari.categoryMemo && !p.sites.yahoo.categoryMemo) {
-    p.sites.mercari.categoryMemo = p.categoryMemo;
-    p.sites.yahoo.categoryMemo = p.categoryMemo;
+  const sites = typeof p.sites === 'object' && p.sites !== null ? p.sites : {};
+  p.sites = {};
+  for (const key of SITE_KEYS) {
+    const s = typeof sites[key] === 'object' && sites[key] !== null ? sites[key] : {};
+    p.sites[key] = {
+      title: String(s.title || ''),
+      category: String(s.category ?? s.categoryMemo ?? legacy.category ?? ''),
+      condition: String(s.condition ?? legacy.condition ?? ''),
+      shipping: String(s.shipping ?? s.shippingMemo ?? legacy.shipping ?? ''),
+    };
   }
   delete p.categoryMemo;
+  delete p.condition;
+  delete p.shippingMemo;
   return p;
+}
+
+// 全商品に共通する出品設定(送料負担・発送日数・発送元)。商品ごとに変わらないため分離。
+function normalizeSettings(input) {
+  const s = typeof input === 'object' && input !== null ? input : {};
+  const site = (key) => {
+    const v = typeof s[key] === 'object' && s[key] !== null ? s[key] : {};
+    return {
+      shippingPayer: String(v.shippingPayer || ''),
+      shipDays: String(v.shipDays || ''),
+      shipFrom: String(v.shipFrom || ''),
+    };
+  };
+  const out = {};
+  for (const key of SITE_KEYS) out[key] = site(key);
+  return out;
+}
+
+async function readSettings() {
+  try {
+    return normalizeSettings(await readJson(SETTINGS_FILE));
+  } catch {
+    return normalizeSettings(null);
+  }
 }
 
 function readBody(req, limit) {
@@ -284,12 +313,20 @@ async function seedSampleIfEmpty() {
       '一つひとつ手作業で制作しているため、色味や形に個体差があります。\n' +
       'ご理解いただける方のご購入をお願いいたします。',
     tags: ['ハンドメイド', 'ピアス', '花', 'アクセサリー'],
-    condition: '新品、未使用',
-    shippingMemo: 'ゆうゆうメルカリ便 / プチプチ+封筒',
     notes: 'これはサンプルです。画像を出品フォームへドラッグする動作確認に使えます。',
     sites: {
-      mercari: { title: '', categoryMemo: 'ハンドメイド > アクセサリー > ピアス' },
-      yahoo: { title: '', categoryMemo: 'アクセサリー > ピアス(レディース)' },
+      mercari: {
+        title: '',
+        category: 'ハンドメイド > アクセサリー > ピアス',
+        condition: '新品、未使用',
+        shipping: 'ゆうゆうメルカリ便',
+      },
+      yahoo: {
+        title: '',
+        category: 'ハンドメイド > アクセサリー > ピアス',
+        condition: '新品、未使用',
+        shipping: 'おてがる配送(日本郵便)',
+      },
     },
   });
   const colors = [
@@ -332,13 +369,42 @@ async function listProducts() {
   return items;
 }
 
+// 各サイトの出品フォームへそのまま入る形に整形する。
+// UIのコピーボタンとChrome拡張の自動入力が同じ値を使うよう、ここが唯一の変換元。
+function buildListing(p, settings) {
+  const out = {};
+  const tags = p.tags || [];
+  for (const key of SITE_KEYS) {
+    const s = p.sites[key];
+    const g = settings[key] || {};
+    out[key] = {
+      title: s.title || p.title || '',
+      // メルカリはタグ専用欄がないため説明文の末尾に#付きで結合する
+      description:
+        key === 'mercari' && tags.length
+          ? `${p.description}\n\n${tags.map((t) => `#${t}`).join(' ')}`
+          : p.description,
+      tags: key === 'mercari' ? [] : tags, // Yahoo!フリマはタグ専用欄(#なし)
+      price: p.price,
+      category: s.category,
+      condition: s.condition,
+      shipping: s.shipping,
+      shippingPayer: g.shippingPayer,
+      shipDays: g.shipDays,
+      shipFrom: g.shipFrom,
+    };
+  }
+  return out;
+}
+
 async function getProduct(slug) {
   // product.jsonはSMB/gitでの手編集を想定しているため、読み出し時にも正規化する
   const raw = await readJson(path.join(productDir(slug), 'product.json'));
   const p = normalizeProduct(raw, null);
   p.createdAt = raw.createdAt || null;
   p.updatedAt = raw.updatedAt || null;
-  return { ...p, slug, photos: await listPhotos(slug) };
+  const [photos, settings] = await Promise.all([listPhotos(slug), readSettings()]);
+  return { ...p, slug, photos, listing: buildListing(p, settings) };
 }
 
 async function createProduct(input) {
@@ -479,6 +545,18 @@ async function handleApi(req, res, segments, url) {
   // /api/config
   if (segments[1] === 'config' && req.method === 'GET') {
     return sendJson(res, 200, { photoPathPrefix: PHOTO_PATH_PREFIX, productsDir: PRODUCTS_DIR });
+  }
+
+  // /api/settings — 全商品共通の出品設定
+  if (segments[1] === 'settings' && segments.length === 2) {
+    if (req.method === 'GET') return sendJson(res, 200, await readSettings());
+    if (req.method === 'PUT') {
+      const body = await readJsonBody(req);
+      const settings = normalizeSettings(body);
+      await withLock('__settings__', () => writeJson(SETTINGS_FILE, settings));
+      return sendJson(res, 200, settings);
+    }
+    return sendJson(res, 405, { error: 'method not allowed' });
   }
 
   if (segments[1] !== 'products') {

@@ -11,7 +11,10 @@
     <aside class="sidebar">
       <header class="sidebar-head">
         <h1>出品くん</h1>
-        <button id="btn-new" class="btn primary">＋ 新規</button>
+        <div style="display:flex; gap:6px">
+          <button id="btn-settings" class="btn" title="共通設定">⚙</button>
+          <button id="btn-new" class="btn primary">＋ 新規</button>
+        </div>
       </header>
       <input id="search" type="search" placeholder="商品を検索…" autocomplete="off">
       <nav id="product-list" class="product-list"></nav>

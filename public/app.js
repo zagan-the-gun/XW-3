@@ -110,21 +110,8 @@ function wireCopyButton(btn, getText) {
 }
 
 // ---------- サイト別整形 ----------
-
-function mercariTitle(p) {
-  return p.sites?.mercari?.title || p.title || '';
-}
-
-function yahooTitle(p) {
-  return p.sites?.yahoo?.title || p.title || '';
-}
-
-// メルカリはハッシュタグ専用欄がなく説明文内に「#タグ」を書く方式
-function mercariDescription(p) {
-  const tags = (p.tags || []).map((t) => `#${t}`).join(' ');
-  const desc = p.description || '';
-  return tags ? `${desc}\n\n${tags}` : desc;
-}
+// 整形済みの値(タイトル・タグ結合済み説明文など)はサーバの listing が唯一の生成元。
+// Chrome拡張が流し込む値とコピーボタンの値を一致させるため、ここでは再計算しない。
 
 function photoUrl(slug, file) {
   return `/photos/${encodeURIComponent(slug)}/${encodeURIComponent(file)}`;
@@ -199,11 +186,23 @@ function copyRowHtml(id, label, value, counter = '', clamp = false) {
     </div>`;
 }
 
+// プルダウン選択用の行(コピーではなく「拡張が選ぶ値 / 手動時は見ながら選ぶ値」)
+function pickRowHtml(label, value) {
+  return `
+    <div class="copy-row">
+      <div class="label">${esc(label)}</div>
+      <div class="value">${esc(value) || '<span class="hint">(未設定)</span>'}</div>
+      <div class="meta"><span class="hint">選択式</span></div>
+    </div>`;
+}
+
 function renderDetail() {
   const p = state.current;
-  const mTitle = mercariTitle(p);
-  const mDesc = mercariDescription(p);
-  const yTitle = yahooTitle(p);
+  const m = p.listing?.mercari || {};
+  const y = p.listing?.yahoo || {};
+  const mTitle = m.title || '';
+  const mDesc = m.description || '';
+  const yTitle = y.title || '';
   const tags = p.tags || [];
   const folderPath = (state.config.photoPathPrefix || state.config.productsDir || '') +
     `/${p.slug}/photos`;
@@ -253,11 +252,12 @@ function renderDetail() {
       ${copyRowHtml('m-title', 'タイトル', mTitle, counterHtml(chars(mTitle), LIMITS.mercariTitle))}
       ${copyRowHtml('m-desc', '説明文(タグ込み)', mDesc, counterHtml(chars(mDesc), LIMITS.mercariDesc), true)}
       ${copyRowHtml('m-price', '価格', String(p.price))}
-      <div class="copy-row">
-        <div class="label">カテゴリ</div>
-        <div class="value">${esc(p.sites?.mercari?.categoryMemo) || '<span class="hint">(未設定)</span>'}</div>
-        <div class="meta"><span class="hint">見ながら選択</span></div>
-      </div>
+      ${pickRowHtml('カテゴリ', m.category)}
+      ${pickRowHtml('商品の状態', m.condition)}
+      ${pickRowHtml('配送の方法', m.shipping)}
+      ${pickRowHtml('送料の負担', m.shippingPayer)}
+      ${pickRowHtml('発送までの日数', m.shipDays)}
+      ${pickRowHtml('発送元の地域', m.shipFrom)}
     </section>
 
     <section class="card">
@@ -265,7 +265,7 @@ function renderDetail() {
         <a class="btn small link" href="${SELL_URLS.yahoo}" target="_blank" rel="noopener">出品ページを開く ↗</a>
       </h3>
       ${copyRowHtml('y-title', 'タイトル', yTitle, counterHtml(chars(yTitle), LIMITS.yahooTitle))}
-      ${copyRowHtml('y-desc', '説明文(タグなし)', p.description || '', counterHtml(chars(p.description || ''), 0), true)}
+      ${copyRowHtml('y-desc', '説明文(タグなし)', y.description || '', counterHtml(chars(y.description || ''), 0), true)}
       <div class="copy-row">
         <div class="label">タグ(専用欄・#なし)</div>
         <div class="value">
@@ -281,20 +281,17 @@ function renderDetail() {
         </div>
       </div>
       ${copyRowHtml('y-price', '価格', String(p.price))}
-      <div class="copy-row">
-        <div class="label">カテゴリ</div>
-        <div class="value">${esc(p.sites?.yahoo?.categoryMemo) || '<span class="hint">(未設定)</span>'}</div>
-        <div class="meta"><span class="hint">見ながら選択</span></div>
-      </div>
+      ${pickRowHtml('カテゴリ', y.category)}
+      ${pickRowHtml('商品の状態', y.condition)}
+      ${pickRowHtml('配送の方法', y.shipping)}
+      ${pickRowHtml('送料の負担', y.shippingPayer)}
+      ${pickRowHtml('発送までの日数', y.shipDays)}
+      ${pickRowHtml('発送元の地域', y.shipFrom)}
     </section>
 
     <section class="card">
-      <h3>出品メモ
-        <span class="hint">フォームには貼らない自分用メモ(プルダウン選択時に見る)</span>
-      </h3>
+      <h3>自分用メモ<span class="hint">出品フォームには入りません</span></h3>
       <dl class="memo-grid">
-        <dt>商品の状態</dt><dd>${esc(p.condition) || '-'}</dd>
-        <dt>配送</dt><dd>${esc(p.shippingMemo) || '-'}</dd>
         <dt>メモ</dt><dd>${esc(p.notes) || '-'}</dd>
       </dl>
     </section>
@@ -306,7 +303,7 @@ function renderDetail() {
     'm-desc': () => mDesc,
     'm-price': () => String(p.price),
     'y-title': () => yTitle,
-    'y-desc': () => p.description || '',
+    'y-desc': () => y.description || '',
     'y-tags': () => tags.join(' '),
     'y-price': () => String(p.price),
   };
@@ -422,9 +419,11 @@ function renderDetail() {
 
 function renderEditForm(isNew = false) {
   const p = isNew
-    ? { name: '', price: 0, title: '', description: '', tags: [], condition: '新品、未使用',
-        shippingMemo: '', notes: '',
-        sites: { mercari: { title: '', categoryMemo: '' }, yahoo: { title: '', categoryMemo: '' } } }
+    ? { name: '', price: 0, title: '', description: '', tags: [], notes: '',
+        sites: {
+          mercari: { title: '', category: '', condition: '新品、未使用', shipping: '' },
+          yahoo: { title: '', category: '', condition: '新品、未使用', shipping: '' },
+        } }
     : state.current;
 
   mainEl.innerHTML = `
@@ -449,16 +448,32 @@ function renderEditForm(isNew = false) {
         <label>タグ</label>
         <div><input id="f-tags" value="${esc((p.tags || []).map((t) => `#${t}`).join(' '))}" placeholder="#ハンドメイド #ピアス (#付き・スペース区切り)">
           <div class="field-note">メルカリ→説明文末尾にそのまま結合 / Yahoo→専用欄用に#なしでコピー(30文字×20個まで)</div></div>
-        <label>商品の状態</label>
-        <div><input id="f-condition" value="${esc(p.condition)}" placeholder="例: 新品、未使用"></div>
-        <label>メルカリ用カテゴリ</label>
-        <div><input id="f-m-category" value="${esc(p.sites?.mercari?.categoryMemo || '')}" placeholder="例: ハンドメイド > アクセサリー > ピアス"></div>
-        <label>Yahoo用カテゴリ</label>
-        <div><input id="f-y-category" value="${esc(p.sites?.yahoo?.categoryMemo || '')}" placeholder="例: アクセサリー > ピアス(レディース)"></div>
-        <label>配送メモ</label>
-        <div><input id="f-shipping" value="${esc(p.shippingMemo)}" placeholder="例: ゆうゆうメルカリ便 / プチプチ+封筒"></div>
         <label>メモ</label>
-        <div><input id="f-notes" value="${esc(p.notes)}"></div>
+        <div><input id="f-notes" value="${esc(p.notes)}" placeholder="自分用(原価・梱包資材・在庫場所など)">
+          <div class="field-note">出品フォームには入りません</div></div>
+      </div>
+
+      <h3 style="margin:18px 0 12px">メルカリの選択項目
+        <span class="hint">拡張がこの文言でプルダウンを選びます。画面の表記そのままで入力</span>
+      </h3>
+      <div class="form-grid">
+        <label>カテゴリ</label>
+        <div><input id="f-m-category" value="${esc(p.sites?.mercari?.category || '')}" placeholder="ハンドメイド > アクセサリー > ピアス">
+          <div class="field-note">階層は「&gt;」で区切る(上位から順に選択されます)</div></div>
+        <label>商品の状態</label>
+        <div><input id="f-m-condition" value="${esc(p.sites?.mercari?.condition || '')}" placeholder="新品、未使用"></div>
+        <label>配送の方法</label>
+        <div><input id="f-m-shipping" value="${esc(p.sites?.mercari?.shipping || '')}" placeholder="ゆうゆうメルカリ便"></div>
+      </div>
+
+      <h3 style="margin:18px 0 12px">Yahoo!フリマの選択項目</h3>
+      <div class="form-grid">
+        <label>カテゴリ</label>
+        <div><input id="f-y-category" value="${esc(p.sites?.yahoo?.category || '')}" placeholder="ハンドメイド > アクセサリー > ピアス"></div>
+        <label>商品の状態</label>
+        <div><input id="f-y-condition" value="${esc(p.sites?.yahoo?.condition || '')}" placeholder="新品、未使用"></div>
+        <label>配送の方法</label>
+        <div><input id="f-y-shipping" value="${esc(p.sites?.yahoo?.shipping || '')}" placeholder="おてがる配送(日本郵便)"></div>
       </div>
       <div class="form-actions">
         <button class="btn primary" id="btn-save">保存</button>
@@ -482,12 +497,20 @@ function renderEditForm(isNew = false) {
       title: $('#f-title').value,
       description: $('#f-desc').value,
       tags: $('#f-tags').value.split(/[\s,、]+/).map((t) => t.replace(/^#/, '')).filter(Boolean),
-      condition: $('#f-condition').value,
-      shippingMemo: $('#f-shipping').value,
       notes: $('#f-notes').value,
       sites: {
-        mercari: { title: $('#f-m-title').value, categoryMemo: $('#f-m-category').value },
-        yahoo: { title: $('#f-y-title').value, categoryMemo: $('#f-y-category').value },
+        mercari: {
+          title: $('#f-m-title').value,
+          category: $('#f-m-category').value,
+          condition: $('#f-m-condition').value,
+          shipping: $('#f-m-shipping').value,
+        },
+        yahoo: {
+          title: $('#f-y-title').value,
+          category: $('#f-y-category').value,
+          condition: $('#f-y-condition').value,
+          shipping: $('#f-y-shipping').value,
+        },
       },
     };
     const saved = isNew
@@ -502,7 +525,63 @@ function renderEditForm(isNew = false) {
   }));
 }
 
+// ---------- 共通設定 ----------
+// 送料負担・発送までの日数・発送元は商品ごとに変わらないため、商品データから分離する
+
+const SETTING_FIELDS = [
+  ['shippingPayer', '送料の負担', '送料込み(出品者負担)'],
+  ['shipDays', '発送までの日数', '1~2日で発送'],
+  ['shipFrom', '発送元の地域', '東京都'],
+];
+
+async function renderSettingsForm() {
+  const s = await api('/api/settings');
+  const siteBlock = (key, label) => `
+    <h3 style="margin:18px 0 12px">${label}</h3>
+    <div class="form-grid">
+      ${SETTING_FIELDS.map(([field, name, ph]) => `
+        <label>${name}</label>
+        <div><input id="s-${key}-${field}" value="${esc(s[key]?.[field] || '')}" placeholder="${esc(ph)}"></div>
+      `).join('')}
+    </div>`;
+
+  mainEl.innerHTML = `
+    <div class="detail-head"><h2>共通設定</h2></div>
+    <section class="card">
+      <p class="hint" style="margin-bottom:6px">
+        全商品で共通の出品条件。拡張がこの文言でプルダウンを選ぶため、各サイトの画面表記そのままで入力してください。
+      </p>
+      ${siteBlock('mercari', 'メルカリ')}
+      ${siteBlock('yahoo', 'Yahoo!フリマ')}
+      <div class="form-actions">
+        <button class="btn primary" id="btn-settings-save">保存</button>
+        <button class="btn" id="btn-settings-cancel">閉じる</button>
+      </div>
+    </section>
+  `;
+
+  $('#btn-settings-cancel').addEventListener('click', () => {
+    if (state.current) renderDetail();
+    else mainEl.innerHTML = '<div class="empty">左のリストから商品を選択してください</div>';
+  });
+
+  $('#btn-settings-save').addEventListener('click', guard('保存失敗', async () => {
+    const body = {};
+    for (const key of ['mercari', 'yahoo']) {
+      body[key] = {};
+      for (const [field] of SETTING_FIELDS) body[key][field] = $(`#s-${key}-${field}`).value;
+    }
+    await api('/api/settings', { method: 'PUT', body: JSON.stringify(body) });
+    toast('共通設定を保存しました');
+    if (state.current) await openProduct(state.current.slug);
+  }));
+}
+
 // ---------- 初期化 ----------
+
+$('#btn-settings').addEventListener('click', () => {
+  renderSettingsForm().catch((e) => toast(`設定の読み込み失敗: ${e.message}`));
+});
 
 $('#btn-new').addEventListener('click', () => {
   state.current = null;

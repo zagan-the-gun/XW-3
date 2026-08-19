@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>mock: Yahoo!フリマ風出品フォーム</title>
+  <style>
+    body { font-family: sans-serif; max-width: 760px; margin: 20px auto; padding: 0 16px; }
+    .field { margin: 14px 0; padding: 10px; border: 1px solid #ddd; border-radius: 8px; }
+    .lbl { font-weight: 600; margin-bottom: 4px; }
+    input, textarea, select { padding: 6px; font-size: 14px; }
+    input[type=text], textarea { width: 100%; }
+    textarea { height: 80px; }
+    .cdd { position: relative; }
+    .cdd button.trigger { padding: 6px 12px; cursor: pointer; }
+    .cdd ul { list-style: none; margin: 4px 0; padding: 4px; border: 1px solid #bbb; background: #fff; max-width: 300px; }
+    .cdd li { padding: 4px 8px; cursor: pointer; }
+    .cdd li:hover { background: #eef; }
+    #zone { border: 2px dashed #aaa; padding: 20px; text-align: center; color: #666; }
+    #shots img { width: 60px; height: 60px; object-fit: cover; margin: 4px; }
+    .chip { display: inline-block; background: #eef; border-radius: 12px; padding: 2px 10px; margin: 2px; font-size: 12px; }
+    #report { position: fixed; left: 8px; bottom: 8px; width: 380px; max-height: 90vh; overflow: auto;
+      background: #111; color: #eee; font: 12px/1.5 monospace; padding: 10px; border-radius: 8px; }
+    #report .ok { color: #6f6; } #report .ng { color: #f77; }
+  </style>
+</head>
+<body>
+  <h1>mock: Yahoo!フリマ風出品フォーム(検証用)</h1>
+  <p>カスタムドロップダウン・タグ専用欄・drop専用ゾーンの経路を検証する。</p>
+
+  <!-- 写真: input への直接セットには反応せず drop だけ受ける(react-dropzone想定) -->
+  <div class="field">
+    <div class="lbl">商品の画像</div>
+    <input type="file" id="fi" accept="image/*" multiple style="display:none">
+    <div id="zone" class="dropzone">ここに画像をドロップ</div>
+    <div id="shots"></div>
+  </div>
+
+  <div class="field">
+    <div class="lbl">商品名</div>
+    <input type="text" placeholder="商品名を入力" id="title">
+  </div>
+
+  <div class="field">
+    <div class="lbl">商品の説明</div>
+    <textarea placeholder="商品の説明を入力"></textarea>
+  </div>
+
+  <div class="field">
+    <div class="lbl">ハッシュタグ</div>
+    <input type="text" id="tag" placeholder="ハッシュタグを入力してEnter">
+    <div id="chips"></div>
+  </div>
+
+  <div class="field">
+    <div class="lbl">カテゴリ</div>
+    <div class="cdd" id="cat">
+      <button type="button" class="trigger">カテゴリを選択</button>
+      <ul role="listbox" hidden></ul>
+      <div id="catpath" style="font-size:12px;color:#555"></div>
+    </div>
+  </div>
+
+  <div class="field">
+    <div class="lbl">商品の状態</div>
+    <div class="cdd" data-list="cond"><button type="button" class="trigger">選択してください</button><ul role="listbox" hidden></ul></div>
+  </div>
+
+  <div class="field">
+    <div class="lbl">送料負担</div>
+    <div class="cdd" data-list="payer"><button type="button" class="trigger">選択してください</button><ul role="listbox" hidden></ul></div>
+  </div>
+
+  <div class="field">
+    <div class="lbl">配送方法</div>
+    <div class="cdd" data-list="ship"><button type="button" class="trigger">選択してください</button><ul role="listbox" hidden></ul></div>
+  </div>
+
+  <div class="field">
+    <div class="lbl">発送元の地域</div>
+    <select id="from">
+      <option value="">選択してください</option>
+      <option>北海道</option><option>東京都</option><option>愛知県</option>
+    </select>
+  </div>
+
+  <div class="field">
+    <div class="lbl">発送までの日数</div>
+    <div class="cdd" data-list="days"><button type="button" class="trigger">選択してください</button><ul role="listbox" hidden></ul></div>
+  </div>
+
+  <div class="field">
+    <div class="lbl">価格</div>
+    <input type="text" id="price" placeholder="価格を入力">
+  </div>
+
+  <div id="report">起動中…</div>
+
+  <script>
+    const LISTS = {
+      cond: ['新品、未使用', '未使用に近い', '目立った傷や汚れなし', 'やや傷や汚れあり', '傷や汚れあり', '全体的に状態が悪い'],
+      payer: ['送料込み(出品者負担)', '着払い(購入者負担)'],
+      ship: ['おてがる配送(ヤマト運輸)', 'おてがる配送(日本郵便)', 'ゆうパケットポストmini', 'その他(送料込み)'],
+      days: ['1~2日で発送', '2~3日で発送', '4~7日で発送'],
+    };
+
+    // 単段のカスタムドロップダウン
+    document.querySelectorAll('.cdd[data-list]').forEach((dd) => {
+      const btn = dd.querySelector('.trigger');
+      const ul = dd.querySelector('ul');
+      btn.addEventListener('click', () => {
+        ul.innerHTML = LISTS[dd.dataset.list].map((t) => `<li role="option">${t}</li>`).join('');
+        ul.hidden = false;
+        ul.querySelectorAll('li').forEach((li) => {
+          li.addEventListener('click', () => {
+            btn.textContent = li.textContent;
+            dd.dataset.value = li.textContent;
+            ul.hidden = true;
+          });
+        });
+      });
+    });
+
+    // 階層カテゴリ: 1段選ぶと同じリストが次の階層に置き換わる
+    const TREE = {
+      'ハンドメイド': { 'アクセサリー': ['ピアス', 'ネックレス'] },
+      'スポーツ・レジャー': { 'フィッシング': ['ルアー用品', 'その他'] },
+    };
+    const cat = document.getElementById('cat');
+    const catBtn = cat.querySelector('.trigger');
+    const catUl = cat.querySelector('ul');
+    let picked = [];
+    function renderCat() {
+      let items;
+      if (picked.length === 0) items = Object.keys(TREE);
+      else if (picked.length === 1) items = Object.keys(TREE[picked[0]] || {});
+      else if (picked.length === 2) items = (TREE[picked[0]] || {})[picked[1]] || [];
+      else {
+        catUl.hidden = true;
+        catBtn.textContent = picked.join(' > ');
+        document.getElementById('catpath').textContent = picked.join(' > ');
+        return;
+      }
+      catUl.innerHTML = items.map((t) => `<li role="option">${t}</li>`).join('');
+      catUl.hidden = false;
+      catUl.querySelectorAll('li').forEach((li) => {
+        li.addEventListener('click', () => { picked.push(li.textContent); renderCat(); });
+      });
+    }
+    catBtn.addEventListener('click', () => { picked = []; renderCat(); });
+
+    // タグ: Enterでチップ化
+    const tag = document.getElementById('tag');
+    tag.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || !tag.value.trim()) return;
+      const chip = document.createElement('span');
+      chip.className = 'chip';
+      chip.textContent = tag.value.trim();
+      document.getElementById('chips').appendChild(chip);
+      tag.value = '';
+    });
+
+    // 写真: drop のみ受け付ける(input への直接セットは無視)
+    const zone = document.getElementById('zone');
+    zone.addEventListener('dragover', (e) => e.preventDefault());
+    zone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      for (const f of e.dataTransfer.files) {
+        const img = document.createElement('img');
+        img.src = URL.createObjectURL(f);
+        document.getElementById('shots').appendChild(img);
+      }
+    });
+  </script>
+
+  <script src="../lib/fill.js"></script>
+  <script src="../sites/yahoo.js"></script>
+  <script src="harness.js"></script>
+  <script>
+    XW3TEST.run('yahoo', {
+      title: 'ダイワ クールライン 800Xシリーズ用 中蓋トレー',
+      description: '3Dプリンタ製の中蓋トレーです。\n\n深さ15mm・エア穴付き',
+      price: 1980,
+      tags: ['ダイワ', 'クーラーボックス', '3Dプリント'],
+      category: 'スポーツ・レジャー > フィッシング > その他',
+      condition: '新品、未使用',
+      shipping: 'おてがる配送(日本郵便)',
+      shippingPayer: '送料込み(出品者負担)',
+      shipDays: '1~2日で発送',
+      shipFrom: '東京都',
+    }, {
+      expect: {
+        'タイトル': 'ダイワ クールライン 800Xシリーズ用 中蓋トレー',
+        '価格': '1980',
+        '商品の状態': '新品、未使用',
+        '送料の負担': '送料込み(出品者負担)',
+        '配送の方法': 'おてがる配送(日本郵便)',
+        '発送元の地域': '東京都',
+        '発送までの日数': '1~2日で発送',
+      },
+      checkDom: () => ({
+        '説明文が入った': document.querySelector('textarea').value.includes('中蓋トレー'),
+        'タグ3個がチップ化された': document.querySelectorAll('#chips .chip').length === 3,
+        'カテゴリ3階層が選択された': document.getElementById('catpath').textContent === 'スポーツ・レジャー > フィッシング > その他',
+        '写真3枚がdropで入った': document.querySelectorAll('#shots img').length === 3,
+        'カスタムDDの状態が反映された': document.querySelector('.cdd[data-list=cond]').dataset.value === '新品、未使用',
+      }),
+    });
+  </script>
+</body>
+</html>
