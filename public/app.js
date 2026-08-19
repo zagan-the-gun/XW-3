@@ -253,6 +253,11 @@ function renderDetail() {
       ${copyRowHtml('m-title', 'タイトル', mTitle, counterHtml(chars(mTitle), LIMITS.mercariTitle))}
       ${copyRowHtml('m-desc', '説明文(タグ込み)', mDesc, counterHtml(chars(mDesc), LIMITS.mercariDesc), true)}
       ${copyRowHtml('m-price', '価格', String(p.price))}
+      <div class="copy-row">
+        <div class="label">カテゴリ</div>
+        <div class="value">${esc(p.sites?.mercari?.categoryMemo) || '<span class="hint">(未設定)</span>'}</div>
+        <div class="meta"><span class="hint">見ながら選択</span></div>
+      </div>
     </section>
 
     <section class="card">
@@ -262,12 +267,12 @@ function renderDetail() {
       ${copyRowHtml('y-title', 'タイトル', yTitle, counterHtml(chars(yTitle), LIMITS.yahooTitle))}
       ${copyRowHtml('y-desc', '説明文(タグなし)', p.description || '', counterHtml(chars(p.description || ''), 0), true)}
       <div class="copy-row">
-        <div class="label">タグ(専用欄)</div>
+        <div class="label">タグ(専用欄・#なし)</div>
         <div class="value">
           <div class="tag-chips">
             ${tags.map((t) => `
               <span class="tag-chip ${chars(t) > LIMITS.yahooTagLen ? 'over' : ''}"
-                    title="${chars(t)}文字">${esc(t)}</span>`).join('') || '<span class="hint">(未設定)</span>'}
+                    title="${chars(t)}文字">#${esc(t)}</span>`).join('') || '<span class="hint">(未設定)</span>'}
           </div>
         </div>
         <div class="meta">
@@ -276,13 +281,19 @@ function renderDetail() {
         </div>
       </div>
       ${copyRowHtml('y-price', '価格', String(p.price))}
+      <div class="copy-row">
+        <div class="label">カテゴリ</div>
+        <div class="value">${esc(p.sites?.yahoo?.categoryMemo) || '<span class="hint">(未設定)</span>'}</div>
+        <div class="meta"><span class="hint">見ながら選択</span></div>
+      </div>
     </section>
 
     <section class="card">
-      <h3>出品メモ</h3>
+      <h3>出品メモ
+        <span class="hint">フォームには貼らない自分用メモ(プルダウン選択時に見る)</span>
+      </h3>
       <dl class="memo-grid">
         <dt>商品の状態</dt><dd>${esc(p.condition) || '-'}</dd>
-        <dt>カテゴリ</dt><dd>${esc(p.categoryMemo) || '-'}</dd>
         <dt>配送</dt><dd>${esc(p.shippingMemo) || '-'}</dd>
         <dt>メモ</dt><dd>${esc(p.notes) || '-'}</dd>
       </dl>
@@ -412,7 +423,8 @@ function renderDetail() {
 function renderEditForm(isNew = false) {
   const p = isNew
     ? { name: '', price: 0, title: '', description: '', tags: [], condition: '新品、未使用',
-        categoryMemo: '', shippingMemo: '', notes: '', sites: { mercari: { title: '' }, yahoo: { title: '' } } }
+        shippingMemo: '', notes: '',
+        sites: { mercari: { title: '', categoryMemo: '' }, yahoo: { title: '', categoryMemo: '' } } }
     : state.current;
 
   mainEl.innerHTML = `
@@ -435,12 +447,14 @@ function renderEditForm(isNew = false) {
         <div><textarea id="f-desc">${esc(p.description)}</textarea>
           <div class="field-note">ハッシュタグは書かないでください(メルカリ用コピーで自動的に末尾へ付きます)</div></div>
         <label>タグ</label>
-        <div><input id="f-tags" value="${esc((p.tags || []).join(' '))}" placeholder="スペース区切り。#は不要">
-          <div class="field-note">メルカリ→説明文末尾に#付きで結合 / Yahoo→専用欄用(30文字×20個まで)</div></div>
+        <div><input id="f-tags" value="${esc((p.tags || []).map((t) => `#${t}`).join(' '))}" placeholder="#ハンドメイド #ピアス (#付き・スペース区切り)">
+          <div class="field-note">メルカリ→説明文末尾にそのまま結合 / Yahoo→専用欄用に#なしでコピー(30文字×20個まで)</div></div>
         <label>商品の状態</label>
         <div><input id="f-condition" value="${esc(p.condition)}" placeholder="例: 新品、未使用"></div>
-        <label>カテゴリメモ</label>
-        <div><input id="f-category" value="${esc(p.categoryMemo)}" placeholder="例: ハンドメイド > アクセサリー > ピアス"></div>
+        <label>メルカリ用カテゴリ</label>
+        <div><input id="f-m-category" value="${esc(p.sites?.mercari?.categoryMemo || '')}" placeholder="例: ハンドメイド > アクセサリー > ピアス"></div>
+        <label>Yahoo用カテゴリ</label>
+        <div><input id="f-y-category" value="${esc(p.sites?.yahoo?.categoryMemo || '')}" placeholder="例: アクセサリー > ピアス(レディース)"></div>
         <label>配送メモ</label>
         <div><input id="f-shipping" value="${esc(p.shippingMemo)}" placeholder="例: ゆうゆうメルカリ便 / プチプチ+封筒"></div>
         <label>メモ</label>
@@ -469,12 +483,11 @@ function renderEditForm(isNew = false) {
       description: $('#f-desc').value,
       tags: $('#f-tags').value.split(/[\s,、]+/).map((t) => t.replace(/^#/, '')).filter(Boolean),
       condition: $('#f-condition').value,
-      categoryMemo: $('#f-category').value,
       shippingMemo: $('#f-shipping').value,
       notes: $('#f-notes').value,
       sites: {
-        mercari: { title: $('#f-m-title').value },
-        yahoo: { title: $('#f-y-title').value },
+        mercari: { title: $('#f-m-title').value, categoryMemo: $('#f-m-category').value },
+        yahoo: { title: $('#f-y-title').value, categoryMemo: $('#f-y-category').value },
       },
     };
     const saved = isNew

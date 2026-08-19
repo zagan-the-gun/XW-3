@@ -149,9 +149,21 @@ function normalizeProduct(input, prev) {
   p.notes = String(p.notes || '');
   const sites = typeof p.sites === 'object' && p.sites !== null ? p.sites : {};
   p.sites = {
-    mercari: { title: String(sites.mercari?.title || '') },
-    yahoo: { title: String(sites.yahoo?.title || '') },
+    mercari: {
+      title: String(sites.mercari?.title || ''),
+      categoryMemo: String(sites.mercari?.categoryMemo || ''),
+    },
+    yahoo: {
+      title: String(sites.yahoo?.title || ''),
+      categoryMemo: String(sites.yahoo?.categoryMemo || ''),
+    },
   };
+  // カテゴリは両サイトで体系が異なるためサイト別で持つ。旧形式(共通categoryMemo)は引き継ぐ
+  if (p.categoryMemo && !p.sites.mercari.categoryMemo && !p.sites.yahoo.categoryMemo) {
+    p.sites.mercari.categoryMemo = p.categoryMemo;
+    p.sites.yahoo.categoryMemo = p.categoryMemo;
+  }
+  delete p.categoryMemo;
   return p;
 }
 
@@ -273,10 +285,12 @@ async function seedSampleIfEmpty() {
       'ご理解いただける方のご購入をお願いいたします。',
     tags: ['ハンドメイド', 'ピアス', '花', 'アクセサリー'],
     condition: '新品、未使用',
-    categoryMemo: 'ハンドメイド > アクセサリー > ピアス',
     shippingMemo: 'ゆうゆうメルカリ便 / プチプチ+封筒',
     notes: 'これはサンプルです。画像を出品フォームへドラッグする動作確認に使えます。',
-    sites: { mercari: { title: '' }, yahoo: { title: '' } },
+    sites: {
+      mercari: { title: '', categoryMemo: 'ハンドメイド > アクセサリー > ピアス' },
+      yahoo: { title: '', categoryMemo: 'アクセサリー > ピアス(レディース)' },
+    },
   });
   const colors = [
     [90, 140, 220],
