@@ -181,13 +181,21 @@
         return;
       }
       if (p.startsWith('/sell/conditions')) {
-        // 選ぶと即フォームへ戻るタイプ
-        view.innerHTML = listHtml('商品の状態', CONDITIONS);
-        view.querySelectorAll('li').forEach((li) => {
-          li.addEventListener('click', () => {
-            state.condition = li.textContent;
-            history.back();
-          });
+        // 実サイト同様、SPAなので出品フォームの見出しがDOMに残る想定。
+        // 行はプレーンなdivで、押せる祖先は一覧全体を囲む[tabindex]だけ
+        view.innerHTML = `
+          <div hidden>商品の出品</div>
+          <h1>商品の状態</h1>
+          <div id="cond-list" tabindex="0">
+            ${CONDITIONS.map((c) => `<div class="cond-row" style="padding:12px;border-bottom:1px solid #eee;cursor:pointer">
+                 <div>${c}</div><div style="font-size:12px;color:#666">説明文</div></div>`).join('')}
+          </div>`;
+        // ハンドラは一覧側に付ける(クリックの伝播で動く)
+        document.getElementById('cond-list').addEventListener('click', (e) => {
+          const row = e.target.closest('.cond-row');
+          if (!row) return;
+          state.condition = row.firstElementChild.textContent;
+          history.back();
         });
         return;
       }

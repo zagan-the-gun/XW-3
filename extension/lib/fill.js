@@ -263,7 +263,7 @@ window.XW3 = window.XW3 || {};
       () => findVisibleOption(wanted, input, scope) || findVisibleOption(wanted, input),
       3000
     );
-    if (node && safeClick(node.closest(ROW_SEL) || node)) {
+    if (node && safeClick(clickTarget(node))) {
       await sleep(250);
       return { ok: true, chosen: (ownText(node) || wanted).slice(0, 40), via: '候補選択' };
     }
@@ -275,7 +275,7 @@ window.XW3 = window.XW3 || {};
       (el) => !before.has(el) && looksLikeSuggestion(el, input)
     );
     for (const el of fresh) {
-      if (safeClick(el.closest(ROW_SEL) || el)) {
+      if (safeClick(clickTarget(el))) {
         await sleep(250);
         return { ok: true, chosen: (ownText(el) || wanted).slice(0, 40), via: '候補の先頭' };
       }
@@ -348,7 +348,7 @@ window.XW3 = window.XW3 || {};
         reason: `選択肢に「${wanted}」が見つかりません${sample ? `(候補: ${sample})` : ''}`,
       };
     }
-    if (!safeClick(node.closest(ROW_SEL) || node)) {
+    if (!safeClick(clickTarget(node))) {
       return { ok: false, reason: '押せない要素でした(安全のため中止)' };
     }
     await sleep(250);
@@ -382,7 +382,7 @@ window.XW3 = window.XW3 || {};
     // すでにシートが開いていればその中から選ぶ(階層カテゴリの2段目以降)
     const open = findVisibleOption(wanted, block);
     if (open) {
-      if (!safeClick(open.closest(ROW_SEL) || open)) {
+      if (!safeClick(clickTarget(open))) {
         return { ok: false, reason: '押せない要素でした(安全のため中止)' };
       }
       await sleep(250);
@@ -424,7 +424,7 @@ window.XW3 = window.XW3 || {};
           1500
         );
         if (node) {
-          safeClick(node.closest(ROW_SEL) || node, { allowLink: true });
+          safeClick(clickTarget(node), { allowLink: true });
           await sleep(700);
           break;
         }
@@ -807,7 +807,7 @@ window.XW3 = window.XW3 || {};
     }
 
     for (const t of spec.openTexts || []) {
-      for (const node of labelNodes(t)) targets.push(node.closest(ROW_SEL) || node);
+      for (const node of labelNodes(t)) targets.push(clickTarget(node));
       for (const c of clickableCandidates()) {
         if (score(c.textContent, t) >= 80) targets.push(c);
       }
@@ -877,12 +877,25 @@ window.XW3 = window.XW3 || {};
   // 候補を順に試す方式では外れた候補もクリックすることになるため、
   // 「押してよいか」を一箇所で判定する。
   // 選択UI(ページ内)ではリンクを押さない。ページ遷移が必要な項目だけ allowLink で許す。
+  // クリックする要素を決める。
+  // クリックは親へ伝播するので、一致した要素そのものを押せば行のハンドラに届く。
+  // 祖先を使うのは「明確に押せる要素」かつ短いテキストのときだけ。
+  // 大きな祖先を押そうとすると、その中の「出品」等の文字で安全判定に引っかかる。
+  function clickTarget(node) {
+    const row = node.closest?.(ROW_SEL);
+    if (row && row !== node && (row.textContent || '').length <= 200) return row;
+    return node;
+  }
+
   function isRiskyClick(el) {
     if (!el) return true;
-    const text = ownText(el) || (el.textContent || '').slice(0, 80);
-    if (NEVER_CLICK.test(text)) return true;
     if (el.matches?.('button[type="submit"], input[type="submit"], form')) return true;
-    return false;
+    const own = ownText(el);
+    const all = el.textContent || '';
+    // 長文を抱えた要素はボタンではない。全文で判定すると無関係な「出品」等で誤検知するため、
+    // その場合は直下のテキストだけを見る
+    const target = all.length > 200 ? own : all || own;
+    return !!target && NEVER_CLICK.test(target);
   }
 
   function safeClick(el, { allowLink = false } = {}) {
@@ -896,8 +909,8 @@ window.XW3 = window.XW3 || {};
     for (const t of CONFIRM_TEXTS) {
       for (const node of labelNodes(t)) {
         if (!inMainContent(node)) continue;
-        const el = node.closest(ROW_SEL) || node;
-        if (NEVER_CLICK.test(el.textContent || '')) continue;
+        const el = clickTarget(node);
+        if (isRiskyClick(el)) continue;
         return el;
       }
     }
@@ -924,7 +937,7 @@ window.XW3 = window.XW3 || {};
       const best = pickBest(direct.map((n) => ownText(n) || n.textContent), wanted);
       if (best) {
         const node = direct[best.index];
-        if (!safeClick(node.closest(ROW_SEL) || node, { allowLink: true })) {
+        if (!safeClick(clickTarget(node), { allowLink: true })) {
           return { ok: false, reason: '押せない要素でした(安全のため中止)' };
         }
         return { ok: true, chosen: (ownText(node) || wanted).slice(0, 40) };
@@ -943,7 +956,7 @@ window.XW3 = window.XW3 || {};
       const sample = cands.slice(0, 8).map((c) => c.textContent.trim().slice(0, 16)).join(' / ');
       return { ok: false, reason: `該当なし(候補: ${sample})` };
     }
-    if (!safeClick(cands[best.index], { allowLink: true })) {
+    if (!safeClick(clickTarget(cands[best.index]), { allowLink: true })) {
       return { ok: false, reason: '押せない要素でした(安全のため中止)' };
     }
     return { ok: true, chosen: best.text };
