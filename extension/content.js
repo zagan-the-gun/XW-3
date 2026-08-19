@@ -41,6 +41,8 @@
     .log small { color: #6b7280; }
     .note { color: #6b7280; font-size: 11px; margin-top: 8px; }
     .warn { background: #fff8e1; border: 1px solid #ffe08a; border-radius: 8px; padding: 6px 8px; font-size: 11px; color: #7a4f01; }
+    .warn a { color: #1f6feb; }
+    #not-form { margin-bottom: 8px; }
   `;
 
   const host = document.createElement('div');
@@ -55,6 +57,10 @@
         <button id="toggle" title="開閉">－</button>
       </div>
       <div class="body">
+        <div class="warn" id="not-form" hidden>
+          このページは出品フォームではありません。
+          <a href="${site.sellUrl}" target="_self">出品フォームを開く</a>
+        </div>
         <select id="products"><option>読み込み中…</option></select>
         <div>
           <label class="chk"><input type="checkbox" id="c-text" checked>テキスト</label>
@@ -184,6 +190,11 @@
   });
 
   $('#reload').addEventListener('click', loadProducts);
+
+  // 出品フォーム以外(出品トップ・商品ページ等)では流し込めないので明示する
+  if (typeof site.isForm === 'function' && !site.isForm()) {
+    $('#not-form').hidden = false;
+  }
 
   loadProducts();
 })();

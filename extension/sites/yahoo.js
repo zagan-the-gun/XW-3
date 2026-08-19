@@ -13,9 +13,11 @@
 window.XW3.registerSite({
   id: 'yahoo',
   name: 'Yahoo!フリマ',
-  match: () => /paypayfleamarket\.yahoo\.co\.jp$/.test(location.hostname),
-  isForm: () => /\/sell/.test(location.pathname),
-  sellUrl: 'https://paypayfleamarket.yahoo.co.jp/sell',
+  // 出品フォームは別ドメイン(paypayfleamarket-sec.yahoo.co.jp/item/add)にある。
+  // /sell は出品トップ(下書き一覧など)で、そこから「出品する」で遷移する
+  match: () => /paypayfleamarket(-sec)?\.yahoo\.co\.jp$/.test(location.hostname),
+  isForm: () => /\/item\/add/.test(location.pathname),
+  sellUrl: 'https://paypayfleamarket-sec.yahoo.co.jp/item/add?from=sellTop',
 
   fields: {
     title: {

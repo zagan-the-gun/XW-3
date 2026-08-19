@@ -14,7 +14,8 @@ window.XW3.registerSite({
   id: 'mercari',
   name: 'メルカリ',
   match: () => /(^|\.)mercari\.com$/.test(location.hostname),
-  isForm: () => /\/sell/.test(location.pathname),
+  // /sell/create が本体。/sell/categories 等の選択ページも同じフローの一部
+  isForm: () => /\/sell(\/|$)/.test(location.pathname),
   sellUrl: 'https://jp.mercari.com/sell/create',
 
   fields: {

@@ -11,7 +11,8 @@ const LIMITS = {
 
 const SELL_URLS = {
   mercari: 'https://jp.mercari.com/sell/create',
-  yahoo: 'https://paypayfleamarket.yahoo.co.jp/sell',
+  // Yahoo!フリマの出品フォームは別ドメイン。/sell は出品トップなので直接フォームを開く
+  yahoo: 'https://paypayfleamarket-sec.yahoo.co.jp/item/add?from=sellTop',
 };
 
 // サーバ側PHOTO_EXTSと同じ許可リスト(MIMEでなく拡張子で判定を揃える)
