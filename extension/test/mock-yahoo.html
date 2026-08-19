@@ -70,14 +70,17 @@
     <div id="chips"></div>
   </div>
 
-  <!-- 実サイト同様、3項目が1枚のカードに同居する(隣の項目を掴まないことの検証) -->
+  <!-- 実サイト同様、3項目が1枚のカードに同居する(隣の項目を掴まないことの検証)。
+       配送方法は「値の行(div)」+アコーディオン内のラジオで、選んでも自動で閉じない。
+       日数と発送元はネイティブselect。div行の判定がselectより先に採用されないことも検証する -->
   <div class="card">
     <div class="lbl">配送方法<span class="req">必須</span></div>
-    <select id="ship">
-      <option value="">選択してください（必須）</option>
-      <option>おてがる配送（ヤマト運輸）</option>
-      <option>おてがる配送（日本郵便）</option>
-    </select>
+    <div class="picker" id="ship-head">選択してください（必須）</div>
+    <div id="ship-body" hidden>
+      <div>Yahoo!フリマのすべての商品は出品者の送料負担、全国一律送料、匿名配送です</div>
+      <label style="display:block;padding:10px"><input type="radio" name="carrier" value="yamato">おてがる配送（ヤマト運輸）</label>
+      <label style="display:block;padding:10px"><input type="radio" name="carrier" value="jp">おてがる配送（日本郵便）</label>
+    </div>
     <div class="lbl" style="margin-top:12px">発送までの日数<span class="req">必須</span></div>
     <select id="days">
       <option value="">選択してください（必須）</option>
@@ -89,6 +92,12 @@
       <option>北海道</option><option>東京都</option><option>愛知県</option>
     </select>
   </div>
+
+  <!-- ページ内のヘルプリンク。「キャンセル」を含むが絶対にクリックしてはいけない -->
+  <p style="font-size:12px;color:#666">
+    出品した商品が購入され、<a href="/help/fee" id="help-fee">取引完了</a>すると販売手数料がかかります。
+    <a href="/help/cancel" id="help-cancel">取引キャンセル時</a>は販売手数料はかかりません
+  </p>
 
   <div class="card">
     <div class="lbl">販売価格<span class="req">必須</span></div>
@@ -158,7 +167,8 @@
       el.classList.add('filled');
       el.dataset.value = value;
     }
-    document.querySelectorAll('.picker').forEach((p) => {
+    // data-sheet を持つピッカーだけがボトムシートを開く(配送方法はアコーディオン)
+    document.querySelectorAll('.picker[data-sheet]').forEach((p) => {
       p.addEventListener('click', () => {
         if (p.dataset.sheet === 'category') catPath = [];
         openSheet(p.dataset.sheet);
@@ -175,6 +185,26 @@
       chip.textContent = tag.value.trim();
       document.getElementById('chips').appendChild(chip);
       tag.value = '';
+    });
+
+    // 配送方法: 行をクリックで開閉するアコーディオン。ラジオを選んでも自動では閉じない
+    const shipHead = document.getElementById('ship-head');
+    const shipBody = document.getElementById('ship-body');
+    shipHead.addEventListener('click', () => { shipBody.hidden = !shipBody.hidden; });
+    document.querySelectorAll('input[name=carrier]').forEach((r) => {
+      r.addEventListener('change', () => {
+        shipHead.textContent = r.nextSibling.textContent.trim();
+        shipHead.classList.add('filled');
+        shipHead.dataset.value = shipHead.textContent;
+      });
+    });
+
+    // ヘルプリンクを踏んだら分かるようにする(踏んではいけない)
+    document.querySelectorAll('#help-cancel, #help-fee').forEach((a) => {
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        window.__helpClicked = (window.__helpClicked || 0) + 1;
+      });
     });
 
     // 写真: dropのみ受け付ける(inputへの直接セットは無視)
@@ -223,10 +253,13 @@
           document.querySelector('.picker[data-sheet="condition"]').dataset.value === '未使用',
         '写真3枚がdropで入った': document.querySelectorAll('#shots img').length === 3,
         // 同一カード内の隣の項目を掴んでいないこと
-        '配送方法に正しい値が入った': document.getElementById('ship').value === 'おてがる配送（日本郵便）',
+        '配送方法に正しい値が入った':
+          document.querySelector('input[name=carrier]:checked')?.value === 'jp',
         '発送までの日数に正しい値が入った': document.getElementById('days').value === '3~7日',
         '発送元の地域に正しい値が入った': document.getElementById('from').value === '東京都',
         'シートが閉じている': !document.getElementById('sheet').classList.contains('open'),
+        '配送方法のアコーディオンが閉じた': document.getElementById('ship-body').hidden === true,
+        'ヘルプリンクを踏んでいない': !window.__helpClicked,
       }),
     });
   </script>

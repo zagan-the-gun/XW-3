@@ -167,7 +167,11 @@
 
       logEl.innerHTML = '';
       for (const r of results) {
-        log(r.label, r.ok, r.ok ? r.chosen || r.method || '' : r.reason || '');
+        // 成功時は「どの方式で入れたか」も出す。外れたときの原因切り分けが速くなる
+        const detail = r.ok
+          ? [r.chosen || r.method || '', r.via ? `[${r.via}]` : ''].filter(Boolean).join(' ')
+          : r.reason || '';
+        log(r.label, r.ok, detail);
       }
       const ng = results.filter((r) => !r.ok).length;
       log(ng ? `${ng}項目は手動で設定してください` : 'すべて入力しました', ng === 0);

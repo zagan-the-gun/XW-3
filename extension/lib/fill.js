@@ -146,7 +146,7 @@ window.XW3 = window.XW3 || {};
     setNativeValue(sel, options[best.index].value);
     fire(sel, 'input');
     fire(sel, 'change');
-    return { ok: true, chosen: best.text, score: best.score };
+    return { ok: true, chosen: best.text, score: best.score, via: 'プルダウン' };
   }
 
   function radioLabel(radio) {
@@ -162,7 +162,7 @@ window.XW3 = window.XW3 || {};
     return radio.value || '';
   }
 
-  function chooseInRadios(radios, wanted) {
+  async function chooseInRadios(radios, wanted, block) {
     const best = pickBest(radios.map(radioLabel), wanted);
     if (!best) {
       return {
@@ -170,8 +170,11 @@ window.XW3 = window.XW3 || {};
         reason: `該当なし(候補: ${radios.slice(0, 6).map((r) => radioLabel(r).trim()).join(' / ')})`,
       };
     }
-    radios[best.index].click();
-    return { ok: true, chosen: best.text, score: best.score };
+    const radio = radios[best.index];
+    radio.click();
+    // 配送方法のように、選択後もアコーディオンが開いたままになる作りは畳む
+    await collapseIfStillOpen(strictTriggerIn(block), radio);
+    return { ok: true, chosen: best.text, score: best.score, via: 'ラジオ' };
   }
 
   function collectOptionNodes(root = document) {
@@ -200,22 +203,52 @@ window.XW3 = window.XW3 || {};
     return null;
   }
 
-  // 開いたシート/モーダルを閉じる。失敗した項目のUIが残ると後続の操作を邪魔する
+  // 開いたシート/モーダルを閉じる。失敗した項目のUIが残ると後続の操作を邪魔する。
+  //
+  // 閉じるボタンの探索は厳格にする。部分一致でリンクを拾うと
+  // 「取引キャンセル時」のようなヘルプリンクを踏んで画面が飛んでしまう。
+  const CLOSE_TEXTS = new Set(['閉じる', 'とじる', '×', '✕', 'close']);
+
   async function closeOverlay() {
     document.dispatchEvent(
       new KeyboardEvent('keydown', { bubbles: true, key: 'Escape', code: 'Escape', keyCode: 27 })
     );
     await sleep(250);
-    for (const t of ['閉じる', 'キャンセル']) {
-      for (const node of labelNodes(t)) {
-        if (!isVisible(node)) continue;
-        const el = node.closest(ROW_SEL) || node;
-        if (NEVER_CLICK.test(el.textContent || '')) continue;
-        el.click();
-        await sleep(250);
-        return;
-      }
+    const el = [...document.querySelectorAll('button, [role="button"], [aria-label]')].find((c) => {
+      // リンクは押さない(ページ遷移してしまう)
+      if (!isVisible(c) || c.tagName === 'A' || c.closest('a')) return false;
+      if (NEVER_CLICK.test(c.textContent || '')) return false;
+      const t = norm(ownText(c) || c.getAttribute('aria-label') || '');
+      return CLOSE_TEXTS.has(t);
+    });
+    if (el) {
+      el.click();
+      await sleep(250);
     }
+  }
+
+  // 画面に浮くパネル(モーダル/ボトムシート)かどうか。
+  // 浮いているものは選択で自分から閉じるので触らない。
+  // ページに流れて開くアコーディオンだけを畳む対象にする。
+  function isOverlay(el) {
+    for (let n = el; n && n !== document.body; n = n.parentElement) {
+      const st = getComputedStyle(n);
+      if (st.position === 'fixed') return true;
+      if (st.position === 'absolute' && parseInt(st.zIndex || '0', 10) > 10) return true;
+    }
+    return false;
+  }
+
+  // 選んだあともパネルが開いたまま残る作り(アコーディオン)は、
+  // もう一度トリガーを押して畳む
+  async function collapseIfStillOpen(trigger, pickedNode) {
+    if (!trigger || !pickedNode) return;
+    await sleep(400);
+    if (!pickedNode.isConnected || !isVisible(pickedNode)) return; // 既に閉じている
+    if (isOverlay(pickedNode)) return; // 浮くパネルは自分で閉じる
+    if (!isVisible(trigger) || NEVER_CLICK.test(trigger.textContent || '')) return;
+    trigger.click();
+    await sleep(250);
   }
 
   async function chooseInCustom(trigger, wanted, block) {
@@ -234,7 +267,8 @@ window.XW3 = window.XW3 || {};
     }
     (node.closest(ROW_SEL) || node).click();
     await sleep(250);
-    return { ok: true, chosen: (ownText(node) || wanted).slice(0, 40) };
+    await collapseIfStillOpen(trigger, node);
+    return { ok: true, chosen: (ownText(node) || wanted).slice(0, 40), via: 'シート' };
   }
 
   const TRIGGER_SEL = '[role="combobox"], [aria-haspopup], button, [role="button"], input[readonly]';
@@ -247,6 +281,14 @@ window.XW3 = window.XW3 || {};
     // Yahoo!フリマのように、値を表示するプレーンなdivがそのままボタンの役割を持つ場合
     if (isVisible(block) && ownText(block)) return block;
     return null;
+  }
+
+  // アコーディオンを畳む用途では、確実にボタンと分かるものだけを対象にする
+  // (blockそのものを押すと別の何かを起動しかねない)
+  function strictTriggerIn(block) {
+    if (!block) return null;
+    if (block.matches?.(TRIGGER_SEL)) return block;
+    return [...block.querySelectorAll(TRIGGER_SEL)].find(isVisible) || null;
   }
 
   // 既に選択肢が開いていればそこから選び、開いていなければトリガーを押してから選ぶ
@@ -306,7 +348,7 @@ window.XW3 = window.XW3 || {};
     if (sel) return chooseInSelect(sel, wanted);
 
     const radios = [...block.querySelectorAll('input[type="radio"]')];
-    if (radios.length) return chooseInRadios(radios, wanted);
+    if (radios.length) return chooseInRadios(radios, wanted, block);
 
     const trigger =
       [...block.querySelectorAll('[role="combobox"], [aria-haspopup], button, [role="button"], input[readonly]')]
@@ -319,6 +361,8 @@ window.XW3 = window.XW3 || {};
   // 1枚のカードに「配送方法/発送までの日数/発送元の地域」がまとめて入っている等、
   // ラベルの祖先を広げると隣の項目のプルダウンを掴んでしまう。
   // 対象ラベルと候補コントロールの間に「別の項目のラベル」が挟まる候補を落とす。
+
+  const STOP = Symbol('stop'); // 探索をその枝で打ち切る合図
 
   let knownLabels = []; // [{el, key}]
 
@@ -350,13 +394,13 @@ window.XW3 = window.XW3 || {};
     return false;
   }
 
-  // 候補のうち「別ラベルに遮られていないもの」を優先する。
-  // 全部遮られている場合は従来どおり先頭を返す(改善であって後退させない)
+  // 別ラベルに遮られている候補を落とす。
+  // 全部遮られたら「この深さには無い」として空を返す。
+  // 間違った候補を採用するより、探索を先へ進める(or 正直に失敗する)方が安全。
   function preferUnblocked(candidates, labelEl, spec) {
     if (!knownLabels.length || candidates.length === 0) return candidates;
     const ownKeys = new Set((spec?.labels || []).map(norm));
-    const ok = candidates.filter((c) => !isBlockedByOtherLabel(labelEl, c, ownKeys));
-    return ok.length ? ok : candidates;
+    return candidates.filter((c) => !isBlockedByOtherLabel(labelEl, c, ownKeys));
   }
 
   // ---------- ラベルから入力欄を探す ----------
@@ -462,47 +506,61 @@ window.XW3 = window.XW3 || {};
       const el = [...root.querySelectorAll(sel)].find(isVisible);
       if (el) return el;
     }
-    for (const label of spec.labels || []) {
-      for (const node of labelNodes(label, root)) {
-        let cur = node;
-        for (let depth = 0; depth < 4 && cur; depth += 1) {
-          if (cur.tagName === 'BODY' || cur.tagName === 'HTML') break;
-
-          const radios = preferUnblocked(
-            [...cur.querySelectorAll('input[type="radio"]')].filter(isVisible),
-            node,
-            spec
-          );
-          if (radios.length > 1) return cur;
-
-          const selects = preferUnblocked(orderedControls(cur, 'select', node), node, spec);
-          // 広すぎる祖先(ページ全体)を掴んだ場合は打ち切る
-          if (selects.length > 6) break;
-          // 複数あるのは階層カテゴリのとき。それ以外は隣の項目なので先頭だけを使う
-          if (selects.length > 1) return spec.cascade ? cur : selects[0];
-          if (selects.length === 1) return selects[0];
-
-          const triggers = preferUnblocked(orderedControls(cur, TRIGGER_SEL, node), node, spec);
-          if (triggers.length) return spec.cascade ? cur : triggers[0];
-
-          // role属性もbuttonも持たない「値を表示する行」(Yahoo!フリマのピッカー)。
-          // ラベル直後にある短いテキストの要素を選択UIとみなす(最後の手段)
-          const rows = preferUnblocked(
-            orderedControls(cur, 'div, span, a, p', node).filter((el) => {
-              if (node.contains(el) || el.contains(node)) return false;
-              const t = ownText(el);
-              return t && t.length <= 30;
-            }),
-            node,
-            spec
-          );
-          if (rows.length) return rows[0];
-
-          cur = cur.parentElement;
+    // ラベルごとに祖先を1段ずつ広げて探す。resolve は見つかった要素を返す
+    const scan = (resolve) => {
+      for (const label of spec.labels || []) {
+        for (const node of labelNodes(label, root)) {
+          let cur = node;
+          for (let depth = 0; depth < 4 && cur; depth += 1) {
+            if (cur.tagName === 'BODY' || cur.tagName === 'HTML') break;
+            const hit = resolve(cur, node);
+            if (hit === STOP) break;
+            if (hit) return hit;
+            cur = cur.parentElement;
+          }
         }
       }
-    }
-    return null;
+      return null;
+    };
+
+    // 1周目: ラジオ / select / role付きトリガー
+    const found = scan((cur, node) => {
+      const radios = preferUnblocked(
+        [...cur.querySelectorAll('input[type="radio"]')].filter(isVisible),
+        node,
+        spec
+      );
+      if (radios.length > 1) return cur;
+
+      const selects = preferUnblocked(orderedControls(cur, 'select', node), node, spec);
+      // 広すぎる祖先(ページ全体)を掴んだ場合は打ち切る
+      if (selects.length > 6) return STOP;
+      // 複数あるのは階層カテゴリのとき。それ以外は隣の項目なので先頭だけを使う
+      if (selects.length > 1) return spec.cascade ? cur : selects[0];
+      if (selects.length === 1) return selects[0];
+
+      const triggers = preferUnblocked(orderedControls(cur, TRIGGER_SEL, node), node, spec);
+      if (triggers.length) return spec.cascade ? cur : triggers[0];
+      return null;
+    });
+    if (found) return found;
+
+    // 2周目(最後の手段): role属性もbuttonも持たない「値を表示する行」。
+    // Yahoo!フリマのピッカーがこれ。1周目を先に完走させないと、
+    // 同じカードの少し下にあるネイティブselectより先にdivを掴んでしまう
+    return scan((cur, node) => {
+      const rows = preferUnblocked(
+        orderedControls(cur, 'div, span, a, p', node).filter((el) => {
+          if (node.contains(el) || el.contains(node)) return false;
+          if (el.querySelector('select, input, textarea')) return false; // 入力欄の入れ物は行ではない
+          const t = ownText(el);
+          return t && t.length <= 30;
+        }),
+        node,
+        spec
+      );
+      return rows[0] || null;
+    });
   }
 
   // ---------- 別ページで選ぶ項目(メルカリのカテゴリー/状態/配送の方法) ----------
