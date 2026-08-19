@@ -73,9 +73,11 @@ window.XW3 = window.XW3 || {};
     const b = norm(wanted);
     if (!a || !b) return 0;
     if (a === b) return 100;
-    if (a.startsWith(b) || b.startsWith(a)) return 85;
-    if (a.includes(b)) return 72;
-    if (b.includes(a)) return 66;
+    // 部分一致は長さ比で減点する。これがないと「メルカリ」(ロゴ等)が
+    // 「ゆうゆうメルカリ便」に一致してしまい、誤った選択を成功扱いしてしまう
+    const ratio = Math.min(a.length, b.length) / Math.max(a.length, b.length);
+    if (a.startsWith(b) || b.startsWith(a)) return Math.round(60 + 30 * ratio);
+    if (a.includes(b) || b.includes(a)) return Math.round(45 + 30 * ratio);
     const A = bigrams(a);
     const B = bigrams(b);
     if (!A.size || !B.size) return 0;
@@ -284,7 +286,7 @@ window.XW3 = window.XW3 || {};
     // a / button も対象にする。メルカリの「カテゴリーを選択する」のように
     // リンク自身が直接テキストを持つ行があり、これを外すと見つけられない。
     for (const el of root.querySelectorAll(
-      'label, legend, h1, h2, h3, h4, h5, span, div, p, dt, th, b, strong, a, button'
+      'label, legend, h1, h2, h3, h4, h5, span, div, p, dt, th, b, strong, a, button, li'
     )) {
       if (!isVisible(el)) continue;
       const own = ownText(el);
@@ -478,15 +480,36 @@ window.XW3 = window.XW3 || {};
     return false;
   }
 
+  // ヘッダー・ナビ・フッターの要素は選択肢ではないので候補から外す
+  // (ロゴの「メルカリ」等が誤ってマッチするのを防ぐ)
+  function inMainContent(el) {
+    return !el.closest(
+      'header, nav, footer, [role="banner"], [role="navigation"], [role="contentinfo"]'
+    );
+  }
+
   async function pickOnPage(wanted) {
-    const cands = await waitFor(() => {
-      const c = clickableCandidates();
-      return c.length ? c : null;
-    }, 5000);
-    if (!cands) return { ok: false, reason: '選択肢が表示されませんでした' };
+    await sleep(250); // DOM差し替え直後に古い内容を拾わないよう一呼吸置く
+
+    // 1) 値そのものを持つ要素を探し、クリックできる祖先を押す
+    //    (選択肢の行がプレーンなdivで実装されていても拾える)
+    const direct = labelNodes(wanted).filter(inMainContent);
+    if (direct.length) {
+      const node = direct[0];
+      (node.closest(ROW_SEL) || node).click();
+      return { ok: true, chosen: (ownText(node) || wanted).slice(0, 40) };
+    }
+
+    // 2) クリック可能な要素をスコアリングして選ぶ
+    const cands =
+      (await waitFor(() => {
+        const c = clickableCandidates().filter(inMainContent);
+        return c.length ? c : null;
+      }, 4000)) || [];
+    if (!cands.length) return { ok: false, reason: '選択肢が表示されませんでした' };
     const best = pickBest(cands.map((c) => c.textContent), wanted);
     if (!best) {
-      const sample = cands.slice(0, 6).map((c) => c.textContent.trim().slice(0, 16)).join(' / ');
+      const sample = cands.slice(0, 8).map((c) => c.textContent.trim().slice(0, 16)).join(' / ');
       return { ok: false, reason: `該当なし(候補: ${sample})` };
     }
     cands[best.index].click();

@@ -50,7 +50,8 @@
     <style>${PANEL_CSS}</style>
     <div class="wrap" id="wrap">
       <div class="head">
-        <strong>出品くん → ${site.name}</strong>
+        <!-- バージョンを出しておく。コード更新後にリロードし忘れると古い挙動のままになるため -->
+        <strong>出品くん → ${site.name} <small style="color:#6b7280;font-weight:400">v${chrome.runtime.getManifest().version}</small></strong>
         <button id="toggle" title="開閉">－</button>
       </div>
       <div class="body">
