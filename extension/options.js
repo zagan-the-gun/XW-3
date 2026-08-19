@@ -14,15 +14,22 @@ chrome.storage.local.get('baseUrl').then(({ baseUrl }) => {
 
 document.getElementById('save').addEventListener('click', async () => {
   const raw = input.value.trim().replace(/\/+$/, '');
-  let origin;
+  let url;
   try {
-    origin = new URL(raw).origin;
+    url = new URL(raw);
   } catch {
-    status('URLの形式が正しくありません(例: http://192.168.1.10:8720)', false);
+    status('URLの形式が正しくありません(例: http://192.168.11.15:8720)', false);
     return;
   }
-  // 任意のLANアドレスを許可するため、保存時にそのオリジンだけ権限を要求する
-  const granted = await chrome.permissions.request({ origins: [`${origin}/*`] });
+  if (!/^https?:$/.test(url.protocol) || !url.hostname) {
+    status('http:// または https:// で始まるURLを入力してください', false);
+    return;
+  }
+  // 任意のLANアドレスを許可するため、保存時にそのホストの権限だけを要求する。
+  // Chromeの権限パターンはポート番号を含められない(含めると無効な指定になる)ため、
+  // ホスト名までで指定する(そのホストの全ポートが対象になる)
+  const pattern = `${url.protocol}//${url.hostname}/*`;
+  const granted = await chrome.permissions.request({ origins: [pattern] });
   if (!granted) {
     status('アクセス許可が得られませんでした', false);
     return;
