@@ -40,6 +40,7 @@
     .log .ok { color: #067647; }
     .log small { color: #6b7280; }
     .note { color: #6b7280; font-size: 11px; margin-top: 8px; }
+    .note a { color: #1f6feb; }
     .warn { background: #fff8e1; border: 1px solid #ffe08a; border-radius: 8px; padding: 6px 8px; font-size: 11px; color: #7a4f01; }
     .warn a { color: #1f6feb; }
     #not-form { margin-bottom: 8px; }
@@ -123,7 +124,19 @@
       noteEl.textContent = '';
     } catch (e) {
       sel.innerHTML = '<option value="">接続できません</option>';
-      noteEl.textContent = `XW-3に接続できません(${e.message})。拡張のオプションでサーバURLを設定してください。`;
+      // 設定画面は拡張の詳細ページの奥にあって探しにくいので、ここから開けるようにする
+      noteEl.textContent = '';
+      const msg = document.createElement('div');
+      msg.textContent = `XW-3に接続できません(${e.message})。サーバのURLを設定してください: `;
+      const link = document.createElement('a');
+      link.href = '#';
+      link.textContent = '設定を開く';
+      link.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        send({ type: 'openOptions' }).catch(() => {});
+      });
+      msg.appendChild(link);
+      noteEl.appendChild(msg);
     }
   }
 

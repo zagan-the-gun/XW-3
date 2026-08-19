@@ -38,6 +38,11 @@ async function getPhoto(url) {
 }
 
 const handlers = {
+  // 接続先の設定画面はパネルから開けるようにする(詳細ページの奥にあって探しにくい)
+  openOptions: async () => {
+    chrome.runtime.openOptionsPage();
+    return true;
+  },
   base: () => getBase(),
   products: () => getJson('/api/products'),
   product: ({ slug }) => getJson(`/api/products/${encodeURIComponent(slug)}`),
