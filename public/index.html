@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>XW-3 出品テンプレ</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <header class="sidebar-head">
+        <h1>出品テンプレ</h1>
+        <button id="btn-new" class="btn primary">＋ 新規</button>
+      </header>
+      <input id="search" type="search" placeholder="商品を検索…" autocomplete="off">
+      <nav id="product-list" class="product-list"></nav>
+    </aside>
+    <main id="main" class="main">
+      <div class="empty">左のリストから商品を選択してください</div>
+    </main>
+  </div>
+  <div id="toast" class="toast" hidden></div>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+services:
+  xw3:
+    build: .
+    container_name: xw3-listing-template
+    ports:
+      - "8720:8720"
+    volumes:
+      - ./data:/data
+    environment:
+      # MacにSMB等でマウントした際のproductsフォルダのパス。
+      # 「写真フォルダのパスをコピー」ボタンがこのプレフィックスで返す。
+      # 例: PHOTO_PATH_PREFIX=/Volumes/xw3-data/products
+      - PHOTO_PATH_PREFIX=
+    restart: unless-stopped

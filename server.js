@@ -1,0 +1,615 @@
+'use strict';
+
+// XW-3 出品テンプレ管理ツール — 依存ゼロの小型ローカルWebサービス
+// データは DATA_DIR/products/<商品フォルダ>/{product.json, photos/NN.ext} のプレーン構造。
+// フォルダ名は人間可読(Finder/SMBマウントから直接ドラッグする運用のため)。
+
+const http = require('node:http');
+const fs = require('node:fs/promises');
+const fsc = require('node:fs');
+const path = require('node:path');
+const zlib = require('node:zlib');
+const crypto = require('node:crypto');
+
+const PORT = parseInt(process.env.PORT || '8720', 10);
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const PRODUCTS_DIR = path.join(DATA_DIR, 'products');
+const TRASH_DIR = path.join(DATA_DIR, 'trash');
+// MacでSMBマウントした際のproductsのパス(例: /Volumes/xw3-data/products)。
+// 「写真フォルダのパスをコピー」がこのプレフィックスで返す。
+const PHOTO_PATH_PREFIX = process.env.PHOTO_PATH_PREFIX || '';
+const PUBLIC_DIR = path.join(__dirname, 'public');
+
+const MAX_PHOTO_BYTES = 30 * 1024 * 1024;
+const MAX_JSON_BYTES = 1 * 1024 * 1024;
+const PHOTO_EXTS = new Set(['.jpg', '.jpeg', '.jfif', '.png', '.webp', '.gif', '.avif']);
+const IMAGE_TYPES = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.jfif': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.avif': 'image/avif',
+};
+const STATIC_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+};
+
+const PRODUCT_FIELDS = [
+  'name', 'price', 'title', 'description', 'tags',
+  'condition', 'categoryMemo', 'shippingMemo', 'notes', 'sites',
+];
+
+// ---------- ユーティリティ ----------
+
+function sanitizeFolderName(name) {
+  let s = String(name || '')
+    .replace(/[\/\\:*?"<>|\0]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^\.+/, '')
+    .slice(0, 60)
+    .trim();
+  return s || 'item';
+}
+
+// URLパスの1セグメントとして安全か(ディレクトリトラバーサル防止)
+function isSafeSegment(seg) {
+  return (
+    typeof seg === 'string' &&
+    seg.length > 0 &&
+    seg.length <= 255 &&
+    !seg.includes('/') &&
+    !seg.includes('\\') &&
+    !seg.includes('\0') &&
+    seg !== '.' &&
+    seg !== '..' &&
+    !seg.startsWith('.')
+  );
+}
+
+function productDir(slug) {
+  return path.join(PRODUCTS_DIR, slug);
+}
+
+function photosDir(slug) {
+  return path.join(productDir(slug), 'photos');
+}
+
+async function readJson(file) {
+  return JSON.parse(await fs.readFile(file, 'utf8'));
+}
+
+async function writeJson(file, obj) {
+  await fs.writeFile(file, JSON.stringify(obj, null, 2) + '\n', 'utf8');
+}
+
+async function exists(p) {
+  try {
+    await fs.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function listPhotos(slug) {
+  let entries;
+  try {
+    entries = await fs.readdir(photosDir(slug));
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((f) => !f.startsWith('.') && PHOTO_EXTS.has(path.extname(f).toLowerCase()))
+    .sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
+}
+
+async function nextPhotoName(slug, ext) {
+  const current = await listPhotos(slug);
+  let max = 0;
+  for (const f of current) {
+    const m = f.match(/^(\d+)\./);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return String(max + 1).padStart(2, '0') + ext;
+}
+
+async function uniqueSlug(base) {
+  let slug = base;
+  let n = 2;
+  while (await exists(productDir(slug))) {
+    slug = `${base}-${n}`;
+    n += 1;
+  }
+  return slug;
+}
+
+function normalizeProduct(input, prev) {
+  const p = prev ? { ...prev } : {};
+  for (const key of PRODUCT_FIELDS) {
+    if (input[key] === undefined) continue;
+    p[key] = input[key];
+  }
+  p.name = String(p.name || '').slice(0, 200) || '(名称未設定)';
+  p.price = Number.isFinite(Number(p.price)) ? Math.max(0, Math.floor(Number(p.price))) : 0;
+  p.title = String(p.title || '');
+  p.description = String(p.description || '');
+  p.tags = Array.isArray(p.tags)
+    ? p.tags.map((t) => String(t).replace(/^#/, '').trim()).filter(Boolean).slice(0, 50)
+    : [];
+  p.condition = String(p.condition || '');
+  p.categoryMemo = String(p.categoryMemo || '');
+  p.shippingMemo = String(p.shippingMemo || '');
+  p.notes = String(p.notes || '');
+  const sites = typeof p.sites === 'object' && p.sites !== null ? p.sites : {};
+  p.sites = {
+    mercari: { title: String(sites.mercari?.title || '') },
+    yahoo: { title: String(sites.yahoo?.title || '') },
+  };
+  return p;
+}
+
+function readBody(req, limit) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > limit) {
+        // destroy()するとレスポンスより先にソケットが落ちて413が届かないため、
+        // 残りのボディは読み捨てて接続を生かしたままrejectする
+        req.removeAllListeners('data');
+        req.resume();
+        reject(Object.assign(new Error('payload too large'), { status: 413 }));
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+async function readJsonBody(req) {
+  const body = JSON.parse((await readBody(req, MAX_JSON_BYTES)).toString('utf8') || '{}');
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    throw Object.assign(new Error('body must be a JSON object'), { status: 400 });
+  }
+  return body;
+}
+
+// キー単位でミューテーション(アップロード/並べ替え/削除)を直列化し、
+// 複数クライアント同時操作でのファイル上書き・喪失レースを排除する
+const locks = new Map();
+function withLock(key, fn) {
+  const prev = locks.get(key) || Promise.resolve();
+  const next = prev.then(fn, fn);
+  locks.set(key, next.catch(() => {}));
+  return next;
+}
+
+function sendJson(res, status, obj) {
+  const body = JSON.stringify(obj);
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': Buffer.byteLength(body),
+  });
+  res.end(body);
+}
+
+// ---------- サンプル用PNG生成(単色) ----------
+
+function crc32(buf) {
+  let c;
+  const table = crc32.table || (crc32.table = (() => {
+    const t = new Int32Array(256);
+    for (let n = 0; n < 256; n++) {
+      c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      t[n] = c;
+    }
+    return t;
+  })());
+  c = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) c = table[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type, data) {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length);
+  const typeBuf = Buffer.from(type, 'ascii');
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])));
+  return Buffer.concat([len, typeBuf, data, crc]);
+}
+
+function makePng(width, height, [r, g, b]) {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // color type: RGB
+  const row = Buffer.alloc(1 + width * 3);
+  for (let x = 0; x < width; x++) {
+    row[1 + x * 3] = r;
+    row[2 + x * 3] = g;
+    row[3 + x * 3] = b;
+  }
+  const raw = Buffer.concat(Array.from({ length: height }, () => row));
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', zlib.deflateSync(raw)),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+async function seedSampleIfEmpty() {
+  const entries = (await fs.readdir(PRODUCTS_DIR)).filter((e) => !e.startsWith('.'));
+  if (entries.length > 0) return;
+  const slug = 'サンプル商品(削除OK)';
+  await fs.mkdir(photosDir(slug), { recursive: true });
+  await writeJson(path.join(productDir(slug), 'product.json'), {
+    name: 'サンプル商品(削除OK)',
+    price: 1200,
+    title: 'ハンドメイド 花モチーフ ピアス ブルー',
+    description:
+      'ハンドメイドの花モチーフピアスです。\n\n' +
+      '・サイズ: 約2cm\n・素材: レジン、樹脂フック\n\n' +
+      '一つひとつ手作業で制作しているため、色味や形に個体差があります。\n' +
+      'ご理解いただける方のご購入をお願いいたします。',
+    tags: ['ハンドメイド', 'ピアス', '花', 'アクセサリー'],
+    condition: '新品、未使用',
+    categoryMemo: 'ハンドメイド > アクセサリー > ピアス',
+    shippingMemo: 'ゆうゆうメルカリ便 / プチプチ+封筒',
+    notes: 'これはサンプルです。画像を出品フォームへドラッグする動作確認に使えます。',
+    sites: { mercari: { title: '' }, yahoo: { title: '' } },
+  });
+  const colors = [
+    [90, 140, 220],
+    [220, 140, 170],
+    [120, 190, 140],
+  ];
+  for (let i = 0; i < colors.length; i++) {
+    await fs.writeFile(
+      path.join(photosDir(slug), `${String(i + 1).padStart(2, '0')}.png`),
+      makePng(480, 360, colors[i])
+    );
+  }
+}
+
+// ---------- APIハンドラ ----------
+
+async function listProducts() {
+  const entries = (await fs.readdir(PRODUCTS_DIR)).filter((e) => !e.startsWith('.'));
+  const items = [];
+  for (const slug of entries) {
+    const jsonPath = path.join(productDir(slug), 'product.json');
+    if (!(await exists(jsonPath))) continue;
+    try {
+      const p = await readJson(jsonPath);
+      const photos = await listPhotos(slug);
+      items.push({
+        slug,
+        name: String(p.name ?? '(名称未設定)'),
+        price: Number.isFinite(Number(p.price)) ? Number(p.price) : 0,
+        updatedAt: p.updatedAt || null,
+        photoCount: photos.length,
+        photo: photos[0] ? `/photos/${encodeURIComponent(slug)}/${encodeURIComponent(photos[0])}` : null,
+      });
+    } catch {
+      // 壊れたproduct.jsonはリストから除外(ファイルは残す)
+    }
+  }
+  items.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+  return items;
+}
+
+async function getProduct(slug) {
+  // product.jsonはSMB/gitでの手編集を想定しているため、読み出し時にも正規化する
+  const raw = await readJson(path.join(productDir(slug), 'product.json'));
+  const p = normalizeProduct(raw, null);
+  p.createdAt = raw.createdAt || null;
+  p.updatedAt = raw.updatedAt || null;
+  return { ...p, slug, photos: await listPhotos(slug) };
+}
+
+async function createProduct(input) {
+  const normalized = normalizeProduct(input, null);
+  const slug = await uniqueSlug(sanitizeFolderName(normalized.name));
+  normalized.createdAt = new Date().toISOString();
+  normalized.updatedAt = normalized.createdAt;
+  await fs.mkdir(photosDir(slug), { recursive: true });
+  await writeJson(path.join(productDir(slug), 'product.json'), normalized);
+  return getProduct(slug);
+}
+
+async function updateProduct(slug, input) {
+  const jsonPath = path.join(productDir(slug), 'product.json');
+  const prev = await readJson(jsonPath);
+  const next = normalizeProduct(input, prev);
+  next.createdAt = prev.createdAt || new Date().toISOString();
+  next.updatedAt = new Date().toISOString();
+  await writeJson(jsonPath, next);
+  return getProduct(slug);
+}
+
+async function duplicateProduct(slug, name) {
+  const src = await getProduct(slug);
+  const newName = String(name || `${src.name} (コピー)`);
+  const newSlug = await uniqueSlug(sanitizeFolderName(newName));
+  await fs.mkdir(photosDir(newSlug), { recursive: true });
+  const copy = normalizeProduct({ ...src, name: newName }, null);
+  copy.createdAt = new Date().toISOString();
+  copy.updatedAt = copy.createdAt;
+  await writeJson(path.join(productDir(newSlug), 'product.json'), copy);
+  for (const photo of src.photos) {
+    await fs.copyFile(path.join(photosDir(slug), photo), path.join(photosDir(newSlug), photo));
+  }
+  return getProduct(newSlug);
+}
+
+async function deleteProduct(slug) {
+  await fs.mkdir(TRASH_DIR, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  await fs.rename(productDir(slug), path.join(TRASH_DIR, `${slug}-${stamp}`));
+}
+
+async function uploadPhoto(slug, originalName, body) {
+  const ext = path.extname(String(originalName || '')).toLowerCase();
+  if (!PHOTO_EXTS.has(ext)) {
+    throw Object.assign(
+      new Error(`unsupported extension: ${ext || '(none)'} — supported: ${[...PHOTO_EXTS].join(' ')}`),
+      { status: 400 }
+    );
+  }
+  let filename = await nextPhotoName(slug, ext);
+  // flag:'wx'で既存ファイルの黙った上書きを防ぎ、衝突時は次の番号でリトライ
+  for (;;) {
+    try {
+      await fs.writeFile(path.join(photosDir(slug), filename), body, { flag: 'wx' });
+      return filename;
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err;
+      const n = parseInt(filename.match(/^(\d+)/)[1], 10) + 1;
+      filename = String(n).padStart(2, '0') + ext;
+    }
+  }
+}
+
+async function reorderPhotos(slug, order) {
+  const dir = photosDir(slug);
+  const current = await listPhotos(slug);
+  if (
+    !Array.isArray(order) ||
+    order.length !== current.length ||
+    new Set(order).size !== order.length ||
+    !order.every((f) => current.includes(f))
+  ) {
+    throw Object.assign(new Error('order must be a permutation of current photos'), { status: 400 });
+  }
+  // 一時名はリクエスト毎に一意にする(固定名だと並行・再実行で相互上書き=写真喪失になる)
+  const token = crypto.randomUUID();
+  const renamed = []; // [tmpName, originalName]
+  try {
+    for (let i = 0; i < order.length; i++) {
+      const tmp = `.tmp-${token}-${i}${path.extname(order[i]).toLowerCase()}`;
+      await fs.rename(path.join(dir, order[i]), path.join(dir, tmp));
+      renamed.push([tmp, order[i]]);
+    }
+    const result = [];
+    for (let i = 0; i < renamed.length; i++) {
+      const name = String(i + 1).padStart(2, '0') + path.extname(renamed[i][0]);
+      await fs.rename(path.join(dir, renamed[i][0]), path.join(dir, name));
+      renamed[i] = null;
+      result.push(name);
+    }
+    return result;
+  } catch (err) {
+    // 途中失敗時、tmpのままだと listPhotos から見えなくなるため必ず可視名へ戻す。
+    // 元の名前が既に別ファイルに使われていたら空き番号へ退避する。
+    for (const entry of renamed) {
+      if (!entry) continue;
+      const [tmp, original] = entry;
+      const target = (await exists(path.join(dir, original)))
+        ? await nextPhotoName(slug, path.extname(tmp))
+        : original;
+      await fs.rename(path.join(dir, tmp), path.join(dir, target)).catch(() => {});
+    }
+    throw err;
+  }
+}
+
+// クラッシュ等で残った不可視の一時ファイル(.tmp-*)を起動時に空き番号へ回収する
+async function recoverTmpPhotos() {
+  let slugs;
+  try {
+    slugs = (await fs.readdir(PRODUCTS_DIR)).filter((e) => !e.startsWith('.'));
+  } catch {
+    return;
+  }
+  for (const slug of slugs) {
+    let entries;
+    try {
+      entries = await fs.readdir(photosDir(slug));
+    } catch {
+      continue;
+    }
+    for (const f of entries) {
+      if (!f.startsWith('.tmp-')) continue;
+      const ext = path.extname(f).toLowerCase();
+      if (!PHOTO_EXTS.has(ext)) continue;
+      const name = await nextPhotoName(slug, ext);
+      await fs.rename(path.join(photosDir(slug), f), path.join(photosDir(slug), name)).catch(() => {});
+      console.log(`recovered orphan tmp photo: ${slug}/${f} -> ${name}`);
+    }
+  }
+}
+
+// ---------- HTTPサーバ ----------
+
+async function handleApi(req, res, segments, url) {
+  // /api/config
+  if (segments[1] === 'config' && req.method === 'GET') {
+    return sendJson(res, 200, { photoPathPrefix: PHOTO_PATH_PREFIX, productsDir: PRODUCTS_DIR });
+  }
+
+  if (segments[1] !== 'products') {
+    return sendJson(res, 404, { error: 'not found' });
+  }
+
+  // /api/products
+  if (segments.length === 2) {
+    if (req.method === 'GET') return sendJson(res, 200, await listProducts());
+    if (req.method === 'POST') {
+      const body = await readJsonBody(req);
+      return sendJson(res, 201, await withLock('__create__', () => createProduct(body)));
+    }
+    return sendJson(res, 405, { error: 'method not allowed' });
+  }
+
+  const slug = segments[2];
+  if (!isSafeSegment(slug)) return sendJson(res, 400, { error: 'invalid product id' });
+  if (!(await exists(path.join(productDir(slug), 'product.json')))) {
+    return sendJson(res, 404, { error: 'product not found' });
+  }
+
+  // /api/products/:slug
+  if (segments.length === 3) {
+    if (req.method === 'GET') return sendJson(res, 200, await getProduct(slug));
+    if (req.method === 'PUT') {
+      const body = await readJsonBody(req);
+      return sendJson(res, 200, await withLock(slug, () => updateProduct(slug, body)));
+    }
+    if (req.method === 'DELETE') {
+      await withLock(slug, () => deleteProduct(slug));
+      return sendJson(res, 200, { ok: true });
+    }
+    return sendJson(res, 405, { error: 'method not allowed' });
+  }
+
+  // /api/products/:slug/duplicate
+  if (segments.length === 4 && segments[3] === 'duplicate' && req.method === 'POST') {
+    const body = await readJsonBody(req);
+    return sendJson(res, 201, await withLock('__create__', () => duplicateProduct(slug, body.name)));
+  }
+
+  // /api/products/:slug/photo-urls — iOSショートカット用(絶対URLの配列を返す)
+  if (segments.length === 4 && segments[3] === 'photo-urls' && req.method === 'GET') {
+    const proto = req.headers['x-forwarded-proto'] || 'http';
+    const host = req.headers['x-forwarded-host'] || req.headers.host;
+    const photos = await listPhotos(slug);
+    return sendJson(res, 200, {
+      urls: photos.map(
+        (f) => `${proto}://${host}/photos/${encodeURIComponent(slug)}/${encodeURIComponent(f)}`
+      ),
+    });
+  }
+
+  // /api/products/:slug/photos ...
+  if (segments[3] === 'photos') {
+    if (segments.length === 4 && req.method === 'PUT') {
+      const body = await readBody(req, MAX_PHOTO_BYTES);
+      if (body.length === 0) return sendJson(res, 400, { error: 'empty body' });
+      const filename = await withLock(slug, () =>
+        uploadPhoto(slug, url.searchParams.get('name'), body)
+      );
+      return sendJson(res, 201, { filename });
+    }
+    if (segments.length === 5 && segments[4] === 'reorder' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const photos = await withLock(slug, () => reorderPhotos(slug, body.order));
+      return sendJson(res, 200, { photos });
+    }
+    if (segments.length === 5 && req.method === 'DELETE') {
+      const file = segments[4];
+      if (!isSafeSegment(file) || !PHOTO_EXTS.has(path.extname(file).toLowerCase())) {
+        return sendJson(res, 400, { error: 'invalid filename' });
+      }
+      await withLock(slug, () => fs.unlink(path.join(photosDir(slug), file)));
+      return sendJson(res, 200, { ok: true });
+    }
+  }
+
+  return sendJson(res, 404, { error: 'not found' });
+}
+
+function servePhoto(req, res, segments) {
+  const [, slug, file] = segments;
+  if (!isSafeSegment(slug) || !isSafeSegment(file)) {
+    return sendJson(res, 400, { error: 'bad path' });
+  }
+  const ext = path.extname(file).toLowerCase();
+  const type = IMAGE_TYPES[ext];
+  if (!type) return sendJson(res, 404, { error: 'not found' });
+  const filePath = path.join(photosDir(slug), file);
+  const stream = fsc.createReadStream(filePath);
+  stream.on('error', () => sendJson(res, 404, { error: 'not found' }));
+  stream.on('open', () => {
+    // 並べ替えでファイル名と中身の対応が変わるためキャッシュさせない
+    // (古いキャッシュを掴むと、ドラッグで運ばれる画像バイトまで古くなる)
+    res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store' });
+    stream.pipe(res);
+  });
+}
+
+function serveStatic(req, res, pathname) {
+  const rel = pathname === '/' ? 'index.html' : pathname.slice(1);
+  if (rel.includes('..') || rel.includes('\0')) return sendJson(res, 400, { error: 'bad path' });
+  const filePath = path.join(PUBLIC_DIR, rel);
+  if (!filePath.startsWith(PUBLIC_DIR + path.sep) && filePath !== path.join(PUBLIC_DIR, 'index.html')) {
+    return sendJson(res, 400, { error: 'bad path' });
+  }
+  const type = STATIC_TYPES[path.extname(filePath).toLowerCase()];
+  if (!type) return sendJson(res, 404, { error: 'not found' });
+  const stream = fsc.createReadStream(filePath);
+  stream.on('error', () => sendJson(res, 404, { error: 'not found' }));
+  stream.on('open', () => {
+    res.writeHead(200, { 'Content-Type': type });
+    stream.pipe(res);
+  });
+}
+
+const server = http.createServer(async (req, res) => {
+  try {
+    const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    let segments;
+    try {
+      segments = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+    } catch {
+      return sendJson(res, 400, { error: 'bad url encoding' });
+    }
+
+    if (segments[0] === 'api') return await handleApi(req, res, segments, url);
+    if (segments[0] === 'photos' && segments.length === 3 && req.method === 'GET') {
+      return servePhoto(req, res, segments);
+    }
+    if (req.method === 'GET') return serveStatic(req, res, url.pathname);
+    return sendJson(res, 404, { error: 'not found' });
+  } catch (err) {
+    const status = err.status || (err instanceof SyntaxError ? 400 : 500);
+    if (status >= 500) console.error(err);
+    return sendJson(res, status, { error: err.message || 'internal error' });
+  }
+});
+
+async function main() {
+  await fs.mkdir(PRODUCTS_DIR, { recursive: true });
+  await seedSampleIfEmpty();
+  await recoverTmpPhotos();
+  server.listen(PORT, () => {
+    console.log(`XW-3 listening on http://0.0.0.0:${PORT}  (data: ${DATA_DIR})`);
+  });
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
