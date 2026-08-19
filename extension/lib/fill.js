@@ -171,9 +171,9 @@ window.XW3 = window.XW3 || {};
       };
     }
     const radio = radios[best.index];
-    radio.click();
-    // 配送方法のように、選択後もアコーディオンが開いたままになる作りは畳む
-    await collapseIfStillOpen(strictTriggerIn(block), radio);
+    // ここに来る時点で選択肢は既に見えている(自分で開いていない)ため、畳む操作はしない。
+    // 畳むのは自分でトリガーを押して開いた場合だけ(chooseInCustom側)
+    if (!safeClick(radio)) return { ok: false, reason: '押せない要素でした' };
     return { ok: true, chosen: best.text, score: best.score, via: 'ラジオ' };
   }
 
@@ -246,13 +246,13 @@ window.XW3 = window.XW3 || {};
     await sleep(400);
     if (!pickedNode.isConnected || !isVisible(pickedNode)) return; // 既に閉じている
     if (isOverlay(pickedNode)) return; // 浮くパネルは自分で閉じる
-    if (!isVisible(trigger) || NEVER_CLICK.test(trigger.textContent || '')) return;
-    trigger.click();
+    if (!isVisible(trigger)) return;
+    safeClick(trigger);
     await sleep(250);
   }
 
   async function chooseInCustom(trigger, wanted, block) {
-    trigger.click();
+    if (!safeClick(trigger)) return { ok: false, reason: '押せない要素でした(安全のため中止)' };
     const node = await waitFor(() => findVisibleOption(wanted, block), 2500);
     if (!node) {
       const sample = collectOptionNodes()
@@ -265,7 +265,9 @@ window.XW3 = window.XW3 || {};
         reason: `選択肢に「${wanted}」が見つかりません${sample ? `(候補: ${sample})` : ''}`,
       };
     }
-    (node.closest(ROW_SEL) || node).click();
+    if (!safeClick(node.closest(ROW_SEL) || node)) {
+      return { ok: false, reason: '押せない要素でした(安全のため中止)' };
+    }
     await sleep(250);
     await collapseIfStillOpen(trigger, node);
     return { ok: true, chosen: (ownText(node) || wanted).slice(0, 40), via: 'シート' };
@@ -297,7 +299,9 @@ window.XW3 = window.XW3 || {};
     // すでにシートが開いていればその中から選ぶ(階層カテゴリの2段目以降)
     const open = findVisibleOption(wanted, block);
     if (open) {
-      (open.closest(ROW_SEL) || open).click();
+      if (!safeClick(open.closest(ROW_SEL) || open)) {
+        return { ok: false, reason: '押せない要素でした(安全のため中止)' };
+      }
       await sleep(250);
       return { ok: true, chosen: (ownText(open) || wanted).slice(0, 40) };
     }
@@ -328,7 +332,7 @@ window.XW3 = window.XW3 || {};
     if (spec.resetTexts?.length) {
       const trigger = triggerIn(block);
       if (trigger) {
-        trigger.click();
+        safeClick(trigger);
         await sleep(700);
       }
       for (const t of spec.resetTexts) {
@@ -337,7 +341,7 @@ window.XW3 = window.XW3 || {};
           1500
         );
         if (node) {
-          (node.closest(ROW_SEL) || node).click();
+          safeClick(node.closest(ROW_SEL) || node, { allowLink: true });
           await sleep(700);
           break;
         }
@@ -769,6 +773,7 @@ window.XW3 = window.XW3 || {};
     for (const send of [(el) => el.click(), clickWithMouseEvents]) {
       for (const el of targets) {
         if (!el.isConnected) continue; // 前のクリックでDOMが差し替わった要素は触らない
+        if (isRiskyClick(el)) continue; // 出品ボタン等は絶対に押さない
         send(el);
         if (await waitFor(isOpen, 1200)) return { ok: true };
         // 想定外のページへ移動したら、以降のクリックは誤操作になるので即中止する
@@ -782,8 +787,27 @@ window.XW3 = window.XW3 || {};
 
   // 「更新する」等でページの選択を確定する必要がある画面向け。
   // 出品そのものを実行するボタンは絶対に押さない。
-  const CONFIRM_TEXTS = ['更新する', '決定', '完了', '保存', '適用', 'この内容で登録'];
-  const NEVER_CLICK = /出品|購入|支払|削除/;
+  const CONFIRM_TEXTS = ['更新する', '決定', '完了', '適用', 'この内容で登録'];
+  // 押したら取り返しがつかない、あるいはページを離れてしまうもの
+  const NEVER_CLICK = /出品|購入|支払|削除|下書き|ログアウト|退会/;
+
+  // 候補を順に試す方式では外れた候補もクリックすることになるため、
+  // 「押してよいか」を一箇所で判定する。
+  // 選択UI(ページ内)ではリンクを押さない。ページ遷移が必要な項目だけ allowLink で許す。
+  function isRiskyClick(el) {
+    if (!el) return true;
+    const text = ownText(el) || (el.textContent || '').slice(0, 80);
+    if (NEVER_CLICK.test(text)) return true;
+    if (el.matches?.('button[type="submit"], input[type="submit"], form')) return true;
+    return false;
+  }
+
+  function safeClick(el, { allowLink = false } = {}) {
+    if (isRiskyClick(el)) return false;
+    if (!allowLink && (el.tagName === 'A' || el.closest?.('a'))) return false;
+    el.click();
+    return true;
+  }
 
   function confirmButton() {
     for (const t of CONFIRM_TEXTS) {
@@ -817,7 +841,9 @@ window.XW3 = window.XW3 || {};
       const best = pickBest(direct.map((n) => ownText(n) || n.textContent), wanted);
       if (best) {
         const node = direct[best.index];
-        (node.closest(ROW_SEL) || node).click();
+        if (!safeClick(node.closest(ROW_SEL) || node, { allowLink: true })) {
+          return { ok: false, reason: '押せない要素でした(安全のため中止)' };
+        }
         return { ok: true, chosen: (ownText(node) || wanted).slice(0, 40) };
       }
     }
@@ -834,7 +860,9 @@ window.XW3 = window.XW3 || {};
       const sample = cands.slice(0, 8).map((c) => c.textContent.trim().slice(0, 16)).join(' / ');
       return { ok: false, reason: `該当なし(候補: ${sample})` };
     }
-    cands[best.index].click();
+    if (!safeClick(cands[best.index], { allowLink: true })) {
+      return { ok: false, reason: '押せない要素でした(安全のため中止)' };
+    }
     return { ok: true, chosen: best.text };
   }
 
@@ -1102,6 +1130,16 @@ window.XW3 = window.XW3 || {};
           push(label, await chooseChoiceAny(spec, value));
         }
         await sleep(300);
+
+        // 想定外のページ移動が起きたら即中止する。
+        // 別のページで操作を続けると何を押すか分からないため
+        if (spec.kind !== 'page' && !isFormReady()) {
+          push('中断', {
+            ok: false,
+            reason: `ページが移動しました(${location.pathname})。出品フォームに戻ってやり直してください`,
+          });
+          return results;
+        }
       }
     }
 

@@ -111,6 +111,14 @@
     <input type="text" id="price" placeholder="価格を入力">
   </div>
 
+  <!-- 絶対に押してはいけないものを置く。候補送りで踏まないことを検証する -->
+  <div class="card">
+    <a href="/sell" id="go-sell">出品トップへ戻る</a>
+    <a href="/help/rules" id="rules">出品禁止物・出品ルール</a>
+    <button type="submit" id="submit-listing">出品する</button>
+    <button type="button" id="save-draft">下書きに保存する</button>
+  </div>
+
   <div id="sheet"><div class="panel"><h2><span class="close">✕</span><span id="sheet-title"></span></h2><div id="sheet-body"></div></div></div>
   <div id="report">起動中…</div>
 
@@ -223,7 +231,13 @@
       });
     });
 
-    // ヘルプリンクを踏んだら分かるようにする(踏んではいけない)
+    // 危険な要素を踏んだら分かるようにする(踏んではいけない)
+    document.querySelectorAll('#go-sell, #rules, #submit-listing, #save-draft').forEach((el) => {
+      el.addEventListener('click', (e) => {
+        e.preventDefault();
+        window.__dangerClicked = (window.__dangerClicked || []).concat(el.id);
+      });
+    });
     document.querySelectorAll('#help-cancel, #help-fee').forEach((a) => {
       a.addEventListener('click', (e) => {
         e.preventDefault();
@@ -284,6 +298,7 @@
         'シートが閉じている': !document.getElementById('sheet').classList.contains('open'),
         '配送方法のアコーディオンが閉じた': document.getElementById('ship-body').hidden === true,
         'ヘルプリンクを踏んでいない': !window.__helpClicked,
+        '出品ボタン等の危険な要素を踏んでいない': !window.__dangerClicked,
       }),
     });
   </script>
