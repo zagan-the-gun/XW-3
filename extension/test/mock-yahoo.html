@@ -76,7 +76,9 @@
   <div class="card">
     <!-- ラベルのテキストと入力欄が同じ枠に入る構造。
          別項目のプルダウンを掴まないことの検証にはこの形が必要 -->
-    <div class="field">配送方法<span class="req">必須</span>
+    <!-- ラベルに「必須」がテキストとして続く形。ラベル索引の完全一致では拾えず、
+         配送方法の探索で下の日数selectが先に見つかってしまう状況を再現する -->
+    <div class="field">配送方法 必須
       <div class="picker" id="ship-head">選択してください（必須）</div>
       <div id="ship-body" hidden>
         <div>Yahoo!フリマのすべての商品は出品者の送料負担、全国一律送料、匿名配送です</div>
@@ -84,13 +86,13 @@
         <label style="display:block;padding:10px"><input type="radio" name="carrier" value="jp">おてがる配送（日本郵便）</label>
       </div>
     </div>
-    <div class="field" style="margin-top:12px">発送までの日数<span class="req">必須</span>
+    <div class="field" style="margin-top:12px">発送までの日数 必須
       <select id="days">
         <option value="">選択してください（必須）</option>
         <option>1~2日</option><option>2~3日</option><option>3~7日</option>
       </select>
     </div>
-    <div class="field" style="margin-top:12px">発送元の地域<span class="req">必須</span>
+    <div class="field" style="margin-top:12px">発送元の地域 必須
       <select id="from">
         <option value="">選択してください（必須）</option>
         <option>北海道</option><option>東京都</option><option>愛知県</option>

@@ -523,9 +523,94 @@ window.XW3 = window.XW3 || {};
     return null;
   }
 
-  // 選択式の項目を探す。
-  // 祖先を1段ずつ広げ、最初に見つかった選択UIを返す(ラジオ群 > select > カスタム)。
-  // 複数のselectがある場合は階層カテゴリなのでコンテナごと返す。
+  // 選択UIの候補を「見込みの高い順」に集める。
+  // 1つに絞ろうとすると実DOMの想定違いで詰むので、候補を並べて順に試す方式にする。
+  // (選択肢にその値が無ければ別項目のUIと判断して次の候補へ進める)
+  function findChoiceCandidates(spec, root = document) {
+    const out = [];
+    const push = (el) => {
+      if (el && !out.includes(el)) out.push(el);
+    };
+
+    for (const sel of spec.selectors || []) {
+      [...root.querySelectorAll(sel)].filter(isVisible).forEach(push);
+    }
+
+    const scanAll = (collect) => {
+      for (const label of spec.labels || []) {
+        for (const node of labelNodes(label, root)) {
+          let cur = node;
+          for (let depth = 0; depth < 4 && cur; depth += 1) {
+            if (cur.tagName === 'BODY' || cur.tagName === 'HTML') break;
+            collect(cur, node);
+            cur = cur.parentElement;
+          }
+        }
+      }
+    };
+
+    // 1周目: 副作用のないもの(ラジオ群 / select)、次にトリガー
+    scanAll((cur, node) => {
+      const radios = preferUnblocked(
+        [...cur.querySelectorAll('input[type="radio"]')].filter(isVisible),
+        node,
+        spec
+      );
+      if (radios.length > 1) push(cur);
+      preferUnblocked(orderedControls(cur, 'select', node), node, spec).slice(0, 3).forEach(push);
+      if (spec.cascade) push(cur); // 階層カテゴリはコンテナ単位で試す
+      preferUnblocked(orderedControls(cur, TRIGGER_SEL, node), node, spec).slice(0, 3).forEach(push);
+    });
+
+    // 2周目: role属性もbuttonも持たない「値を表示する行」
+    const labelText = (node) => norm(ownText(node));
+    scanAll((cur, node) => {
+      preferUnblocked(
+        orderedControls(cur, 'div, span, a, p', node).filter((el) => {
+          if (el === node || el.contains(node)) return false;
+          if (el.querySelector('select, input, textarea')) return false;
+          const t = ownText(el);
+          if (!t || t.length > 30) return false;
+          if (BADGE_TEXTS.has(norm(t))) return false;
+          if (norm(t) === labelText(node)) return false;
+          return true;
+        }),
+        node,
+        spec
+      )
+        .slice(0, 3)
+        .forEach(push);
+    });
+
+    return out.slice(0, 8);
+  }
+
+  // 候補を順に試し、最初に成功したものを採用する
+  async function chooseChoiceAny(spec, wanted) {
+    const cands = findChoiceCandidates(spec);
+    if (!cands.length) return { ok: false, reason: '項目が見つかりません' };
+    let last = null;
+    for (const c of cands) {
+      const r = await chooseInBlock(c, wanted);
+      if (r.ok) return r;
+      last = r;
+    }
+    return last;
+  }
+
+  async function chooseCascadeAny(spec, parts) {
+    const cands = findChoiceCandidates(spec);
+    if (!cands.length) return [{ part: parts[0], ok: false, reason: '項目が見つかりません' }];
+    let last = null;
+    for (const c of cands) {
+      const steps = await chooseCascade(c, parts, spec);
+      if (steps[0]?.ok) return steps;
+      last = steps;
+    }
+    return last;
+  }
+
+  // 選択式の項目を探す(単一候補版。互換のため残す)
   function findChoiceBlock(spec, root = document) {
     for (const sel of spec.selectors || []) {
       const el = [...root.querySelectorAll(sel)].find(isVisible);
@@ -1010,11 +1095,11 @@ window.XW3 = window.XW3 || {};
           );
         } else if (spec.cascade) {
           const parts = String(value).split(/\s*[>›»]\s*/).filter(Boolean);
-          const steps = await chooseCascade(findChoiceBlock(spec), parts, spec);
+          const steps = await chooseCascadeAny(spec, parts);
           if (!steps.length) push(label, { ok: false, reason: '項目が見つかりません' });
           steps.forEach((r, i) => push(`${label}(${i + 1}/${parts.length}) ${r.part}`, r));
         } else {
-          push(label, await chooseInBlock(findChoiceBlock(spec), value));
+          push(label, await chooseChoiceAny(spec, value));
         }
         await sleep(300);
       }
