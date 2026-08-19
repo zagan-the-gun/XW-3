@@ -234,8 +234,6 @@ section.card > h3 {
   font-family: inherit;
   background: var(--panel);
 }
-/* 「その他(自由入力)」を選んだときに現れる入力欄 */
-.form-grid select + input:not([hidden]) { margin-top: 6px; }
 .form-grid textarea { min-height: 180px; resize: vertical; line-height: 1.6; }
 .form-actions { margin-top: 16px; display: flex; gap: 10px; }
 .field-note { font-size: 12px; color: var(--muted); margin-top: 3px; }
