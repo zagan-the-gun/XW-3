@@ -300,7 +300,7 @@ window.XW3 = window.XW3 || {};
     const el = [...document.querySelectorAll('button, [role="button"], [aria-label]')].find((c) => {
       // リンクは押さない(ページ遷移してしまう)
       if (!isVisible(c) || c.tagName === 'A' || c.closest('a')) return false;
-      if (NEVER_CLICK.test(c.textContent || '')) return false;
+      if (isRiskyClick(c)) return false;
       const t = norm(ownText(c) || c.getAttribute('aria-label') || '');
       return CLOSE_TEXTS.has(t);
     });
@@ -871,8 +871,16 @@ window.XW3 = window.XW3 || {};
   // 「更新する」等でページの選択を確定する必要がある画面向け。
   // 出品そのものを実行するボタンは絶対に押さない。
   const CONFIRM_TEXTS = ['更新する', '決定', '完了', '適用', 'この内容で登録'];
-  // 押したら取り返しがつかない、あるいはページを離れてしまうもの
-  const NEVER_CLICK = /出品|購入|支払|削除|下書き|ログアウト|退会/;
+
+  // 押したら取り返しがつかない、あるいはページを離れてしまう操作のラベル。
+  // 単語を含むだけで弾くと、説明文(例「新品で購入し、一度も使用していない」)まで
+  // 押せなくなるため、ラベルの先頭か末尾に来る場合だけを危険とみなす
+  // (日本語のボタンは動詞が末尾に来る)
+  const DANGER_ACTIONS = [
+    '出品する', '出品', '購入する', '購入', '支払う', '支払い',
+    '削除する', '削除', '下書きに保存する', '下書きに保存', '下書き保存',
+    'ログアウト', '退会する', '退会',
+  ];
 
   // 候補を順に試す方式では外れた候補もクリックすることになるため、
   // 「押してよいか」を一箇所で判定する。
@@ -890,12 +898,12 @@ window.XW3 = window.XW3 || {};
   function isRiskyClick(el) {
     if (!el) return true;
     if (el.matches?.('button[type="submit"], input[type="submit"], form')) return true;
-    const own = ownText(el);
-    const all = el.textContent || '';
-    // 長文を抱えた要素はボタンではない。全文で判定すると無関係な「出品」等で誤検知するため、
-    // その場合は直下のテキストだけを見る
-    const target = all.length > 200 ? own : all || own;
-    return !!target && NEVER_CLICK.test(target);
+    const text = norm((ownText(el) || el.textContent || '').trim());
+    if (!text || text.length > 40) return false; // 長文は操作ボタンではない
+    return DANGER_ACTIONS.some((w) => {
+      const n = norm(w);
+      return text === n || text.startsWith(n) || text.endsWith(n);
+    });
   }
 
   function safeClick(el, { allowLink = false } = {}) {

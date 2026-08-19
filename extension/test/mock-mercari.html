@@ -51,7 +51,17 @@
       ['大和玩具', 'ダイワガング／ダイワトーイ'],
       ['大和書房', 'ダイワショボウ'],
     ];
-    const CONDITIONS = ['新品、未使用', '未使用に近い', '目立った傷や汚れなし', 'やや傷や汚れあり', '傷や汚れあり', '全体的に状態が悪い'];
+    // 実サイトの説明文をそのまま入れる。
+    // 「新品で購入し、一度も使用していない」に「購入」が含まれるため、
+    // 危険語の判定が雑だとここで押せなくなる(実際にそうなった)
+    const CONDITIONS = [
+      ['新品、未使用', '新品で購入し、一度も使用していない'],
+      ['未使用に近い', '数回使用し、あまり使用感がない'],
+      ['目立った傷や汚れなし', '細かな使用感・傷・汚れはあるが、目立たない'],
+      ['やや傷や汚れあり', '目につく傷や汚れがある'],
+      ['傷や汚れあり', '多くの人が見てわかるような傷や汚れがある'],
+      ['全体的に状態が悪い', '商品の全体に目立つ傷や汚れ、ダメージがある'],
+    ];
     // 実サイトは3つのメルカリ便 + 「その他」配下に多数(ゆうメール/レターパック等)
     const SHIPPINGS = [
       'らくらくメルカリ便', 'ゆうゆうメルカリ便', '梱包・発送たのメル便',
@@ -187,8 +197,8 @@
           <div hidden>商品の出品</div>
           <h1>商品の状態</h1>
           <div id="cond-list" tabindex="0">
-            ${CONDITIONS.map((c) => `<div class="cond-row" style="padding:12px;border-bottom:1px solid #eee;cursor:pointer">
-                 <div>${c}</div><div style="font-size:12px;color:#666">説明文</div></div>`).join('')}
+            ${CONDITIONS.map(([t, d]) => `<div class="cond-row" style="padding:12px;border-bottom:1px solid #eee;cursor:pointer">
+                 <div>${t}</div><div style="font-size:12px;color:#666">${d}</div></div>`).join('')}
           </div>`;
         // ハンドラは一覧側に付ける(クリックの伝播で動く)
         document.getElementById('cond-list').addEventListener('click', (e) => {
