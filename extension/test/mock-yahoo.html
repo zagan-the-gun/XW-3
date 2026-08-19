@@ -234,7 +234,8 @@
     ];
     const brandInput = document.getElementById('brand');
     const brandList = document.getElementById('brand-list');
-    brandInput.addEventListener('input', () => {
+    // 実サイト同様、候補はキー入力に反応して出す(値を直接セットしただけでは出ない)
+    brandInput.addEventListener('keyup', () => {
       const q = brandInput.value.trim().toLowerCase();
       const hits = q ? BRANDS.filter((b) => (b[0] + b[1]).toLowerCase().includes(q)) : [];
       brandList.innerHTML = hits.map((b) =>

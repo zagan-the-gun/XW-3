@@ -204,27 +204,73 @@ window.XW3 = window.XW3 || {};
     return null;
   }
 
-  // 入力欄に打ち込むと候補が出るタイプ(Yahoo!フリマのブランド)。
-  // 候補は入力欄の近くに出るので、まず周辺だけを探して誤爆を防ぐ
+  // 候補の絞り込みはキー入力で走るサイトが多いので、1文字ずつ打つ
+  async function typeText(el, text) {
+    el.focus();
+    setNativeValue(el, '');
+    fire(el, 'input');
+    let acc = '';
+    for (const ch of String(text)) {
+      acc += ch;
+      const opts = { bubbles: true, key: ch };
+      el.dispatchEvent(new KeyboardEvent('keydown', opts));
+      setNativeValue(el, acc);
+      fire(el, 'input');
+      el.dispatchEvent(new KeyboardEvent('keyup', opts));
+      await sleep(60);
+    }
+    fire(el, 'change');
+  }
+
+  // 候補として押せそうな行(入力欄の外にある短いテキストの要素)
+  function suggestionRows(root = document) {
+    return [...root.querySelectorAll('div, li, button, a, span, p')].filter((el) => {
+      if (!isVisible(el) || !inMainContent(el)) return false;
+      if (el.querySelector('input, select, textarea')) return false;
+      const t = ownText(el);
+      return t && t.length <= 40 && !BADGE_TEXTS.has(norm(t));
+    });
+  }
+
+  // 入力欄に打ち込むと候補が出るタイプ(Yahoo!フリマのブランド)
   async function chooseByAutocomplete(spec, wanted) {
     const input = findField({ ...spec, kind: 'text' });
     if (!input) return { ok: false, reason: '入力欄が見つかりません' };
-    await fillText(input, wanted);
-    await sleep(250);
+
+    // 打つ前の状態を覚えておく。あとで「新しく現れた行」を候補と判断するため
+    const before = new Set(suggestionRows());
+
+    await typeText(input, wanted);
+    await sleep(300);
 
     let scope = input;
     for (let i = 0; i < 3 && scope.parentElement; i += 1) scope = scope.parentElement;
 
+    // まず文字列が一致する候補を探す(これが本筋)
     const node = await waitFor(
       () => findVisibleOption(wanted, input, scope) || findVisibleOption(wanted, input),
       3000
     );
-    if (!node) return { ok: false, reason: `候補に「${wanted}」が出ませんでした` };
-    if (!safeClick(node.closest(ROW_SEL) || node)) {
+    if (node) {
+      if (!safeClick(node.closest(ROW_SEL) || node)) {
+        return { ok: false, reason: '押せない要素でした(安全のため中止)' };
+      }
+      await sleep(250);
+      return { ok: true, chosen: (ownText(node) || wanted).slice(0, 40), via: '候補選択' };
+    }
+
+    // 一致しなければ「新しく現れた行の先頭」を選ぶ。
+    // 打った文字と完全には合わない表記(例: daiwa → DAIWA（釣り）)を拾うため。
+    // 何も現れていないときは押さない(無関係な要素を踏むのを防ぐ)
+    const fresh = suggestionRows().filter((el) => !before.has(el));
+    const top = fresh.find((el) => input.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)
+      || fresh[0];
+    if (!top) return { ok: false, reason: `候補に「${wanted}」が出ませんでした` };
+    if (!safeClick(top.closest(ROW_SEL) || top)) {
       return { ok: false, reason: '押せない要素でした(安全のため中止)' };
     }
     await sleep(250);
-    return { ok: true, chosen: (ownText(node) || wanted).slice(0, 40), via: '候補選択' };
+    return { ok: true, chosen: (ownText(top) || wanted).slice(0, 40), via: '候補の先頭' };
   }
 
   // 開いたシート/モーダルを閉じる。失敗した項目のUIが残ると後続の操作を邪魔する。
