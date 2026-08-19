@@ -110,21 +110,27 @@ function wireCopyButton(btn, getText) {
 }
 
 // ---------- 選択式フィールド ----------
-// 既知の選択肢はプルダウンで選ぶ。一覧になければ「その他(自由入力)」で任意の文字列も入れられる。
+// field は {options, other}。other=false の項目(選択肢が確定しているもの)は
+// 出品ページ側にも自由入力の余地がないため「その他(自由入力)」を出さない。
 // 値の保持は常に input 側なので、保存処理は自由入力のときと同じ。
 
-function choiceFieldHtml(inputId, options, value, note = '', emptyLabel = '(未設定)') {
-  const opts = options || [];
+function choiceFieldHtml(inputId, field, value, note = '', emptyLabel = '(未設定)') {
+  const opts = field?.options || [];
+  const allowOther = !!field?.other;
   const known = opts.includes(value);
-  const isOther = !!value && !known;
+  // 一覧外の値(旧データからの移行など)は、閉じた項目でも選択肢として出して
+  // 気づけるようにする。黙って消さない
+  const stray = !!value && !known;
   return `
     <div>
       <select data-choice-for="${inputId}">
         <option value=""${!value ? ' selected' : ''}>${esc(emptyLabel)}</option>
         ${opts.map((o) => `<option${known && o === value ? ' selected' : ''}>${esc(o)}</option>`).join('')}
-        <option value="__other__"${isOther ? ' selected' : ''}>その他(自由入力)</option>
+        ${stray && !allowOther ? `<option selected>${esc(value)}</option>` : ''}
+        ${allowOther ? `<option value="__other__"${stray ? ' selected' : ''}>その他(自由入力)</option>` : ''}
       </select>
-      <input id="${inputId}" value="${esc(value)}"${isOther ? '' : ' hidden'} placeholder="画面の表記どおりに入力">
+      <input id="${inputId}" value="${esc(value)}"${stray && allowOther ? '' : ' hidden'} placeholder="画面の表記どおりに入力">
+      ${stray && !allowOther ? '<div class="field-note">現在の値は選択肢にありません。正しいものを選び直してください</div>' : ''}
       ${note ? `<div class="field-note">${esc(note)}</div>` : ''}
     </div>`;
 }
