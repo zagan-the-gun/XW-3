@@ -45,11 +45,7 @@ window.XW3.registerSite({
       cascade: true, // 「アウトドア、釣り、旅行用品 > 釣り > ...」の3〜5階層(ボトムシートでドリルダウン)
       labels: ['カテゴリ'],
     },
-    // 任意項目。UIの形式は未検証(ボトムシート想定)。外れる場合は実DOMを見て調整する
-    brand: {
-      kind: 'choice',
-      labels: ['ブランド'],
-    },
+    // ブランドの項目は存在しないため定義しない
     condition: {
       kind: 'choice',
       labels: ['商品の状態', '商品状態'],
@@ -74,5 +70,7 @@ window.XW3.registerSite({
   photo: {
     inputSelectors: ['input[type="file"][accept*="image"]', 'input[type="file"]'],
     dropzoneSelectors: ['[class*="dropzone"]', '[class*="ImageUpload"]', 'label:has(input[type="file"])'],
+    // クラス名が当たらない場合は画面の案内文からドロップ先を探す
+    dropzoneTexts: ['ドラッグ＆ドロップして追加', 'ドラッグ＆ドロップ', '画像を追加する'],
   },
 });

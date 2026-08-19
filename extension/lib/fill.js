@@ -182,49 +182,86 @@ window.XW3 = window.XW3 || {};
     return [];
   }
 
-  async function chooseInCustom(trigger, wanted) {
-    trigger.click();
-    let nodes = [];
-    for (let i = 0; i < 15 && nodes.length === 0; i++) {
-      await sleep(100);
-      nodes = collectOptionNodes();
+  // 画面に出ている選択肢から wanted に一致するものを探す。
+  // role や class に依存せず「その文字列を持つ要素」で探すため、
+  // プレーンなdivで組まれたボトムシート(Yahoo!フリマ)でも拾える。
+  function findVisibleOption(wanted, excludeIn) {
+    const inSheet = (n) => isVisible(n) && inMainContent(n) && !(excludeIn && excludeIn.contains(n));
+    const byText = labelNodes(wanted).filter(inSheet);
+    if (byText.length) {
+      const best = pickBest(byText.map((n) => ownText(n) || n.textContent), wanted);
+      if (best) return byText[best.index];
     }
-    if (!nodes.length) return { ok: false, reason: '選択肢が開きませんでした(手動で選んでください)' };
-    const best = pickBest(nodes.map((n) => n.textContent), wanted);
-    if (!best) {
-      const sample = nodes.slice(0, 6).map((n) => n.textContent.trim().slice(0, 20)).join(' / ');
-      document.body.click();
-      return { ok: false, reason: `該当なし(候補: ${sample})` };
+    const nodes = collectOptionNodes().filter(inSheet);
+    if (nodes.length) {
+      const best = pickBest(nodes.map((n) => n.textContent), wanted);
+      if (best) return nodes[best.index];
     }
-    nodes[best.index].click();
-    await sleep(150);
-    return { ok: true, chosen: best.text.slice(0, 40), score: best.score };
+    return null;
   }
+
+  // 開いたシート/モーダルを閉じる。失敗した項目のUIが残ると後続の操作を邪魔する
+  async function closeOverlay() {
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { bubbles: true, key: 'Escape', code: 'Escape', keyCode: 27 })
+    );
+    await sleep(250);
+    for (const t of ['閉じる', 'キャンセル']) {
+      for (const node of labelNodes(t)) {
+        if (!isVisible(node)) continue;
+        const el = node.closest(ROW_SEL) || node;
+        if (NEVER_CLICK.test(el.textContent || '')) continue;
+        el.click();
+        await sleep(250);
+        return;
+      }
+    }
+  }
+
+  async function chooseInCustom(trigger, wanted, block) {
+    trigger.click();
+    const node = await waitFor(() => findVisibleOption(wanted, block), 2500);
+    if (!node) {
+      const sample = collectOptionNodes()
+        .slice(0, 6)
+        .map((n) => n.textContent.trim().slice(0, 16))
+        .join(' / ');
+      await closeOverlay();
+      return {
+        ok: false,
+        reason: `選択肢に「${wanted}」が見つかりません${sample ? `(候補: ${sample})` : ''}`,
+      };
+    }
+    (node.closest(ROW_SEL) || node).click();
+    await sleep(250);
+    return { ok: true, chosen: (ownText(node) || wanted).slice(0, 40) };
+  }
+
+  const TRIGGER_SEL = '[role="combobox"], [aria-haspopup], button, [role="button"], input[readonly]';
 
   function triggerIn(block) {
     if (!block) return null;
-    if (block.matches?.('[role="combobox"], [aria-haspopup], button, [role="button"], input[readonly]')) return block;
-    return (
-      [...block.querySelectorAll('[role="combobox"], [aria-haspopup], button, [role="button"], input[readonly]')]
-        .find(isVisible) || null
-    );
+    if (block.matches?.(TRIGGER_SEL)) return block;
+    const direct = [...block.querySelectorAll(TRIGGER_SEL)].find(isVisible);
+    if (direct) return direct;
+    // Yahoo!フリマのように、値を表示するプレーンなdivがそのままボタンの役割を持つ場合
+    if (isVisible(block) && ownText(block)) return block;
+    return null;
   }
 
   // 既に選択肢が開いていればそこから選び、開いていなければトリガーを押してから選ぶ
   // (階層カテゴリは1段目を選ぶと同じモーダル内に2段目が出る作りが多い)
   async function chooseCustomStep(block, wanted) {
-    const open = collectOptionNodes();
-    if (open.length) {
-      const best = pickBest(open.map((n) => n.textContent), wanted);
-      if (best) {
-        open[best.index].click();
-        await sleep(200);
-        return { ok: true, chosen: best.text.slice(0, 40), score: best.score };
-      }
+    // すでにシートが開いていればその中から選ぶ(階層カテゴリの2段目以降)
+    const open = findVisibleOption(wanted, block);
+    if (open) {
+      (open.closest(ROW_SEL) || open).click();
+      await sleep(250);
+      return { ok: true, chosen: (ownText(open) || wanted).slice(0, 40) };
     }
     const trigger = triggerIn(block);
     if (!trigger) return { ok: false, reason: '選択UIを特定できません' };
-    return chooseInCustom(trigger, wanted);
+    return chooseInCustom(trigger, wanted, block);
   }
 
   // 階層カテゴリで使うscope。block自身がselectの場合は兄弟のselectを見るため親へ上がる
@@ -274,8 +311,52 @@ window.XW3 = window.XW3 || {};
     const trigger =
       [...block.querySelectorAll('[role="combobox"], [aria-haspopup], button, [role="button"], input[readonly]')]
         .find(isVisible) || (isVisible(block) ? block : null);
-    if (trigger) return chooseInCustom(trigger, wanted);
+    if (trigger) return chooseInCustom(trigger, wanted, block);
     return { ok: false, reason: '選択UIを特定できません' };
+  }
+
+  // ---------- 隣の項目の誤取得を防ぐ ----------
+  // 1枚のカードに「配送方法/発送までの日数/発送元の地域」がまとめて入っている等、
+  // ラベルの祖先を広げると隣の項目のプルダウンを掴んでしまう。
+  // 対象ラベルと候補コントロールの間に「別の項目のラベル」が挟まる候補を落とす。
+
+  let knownLabels = []; // [{el, key}]
+
+  function indexKnownLabels(site) {
+    const keys = new Set();
+    for (const spec of Object.values(site?.fields || {})) {
+      for (const l of spec.labels || []) keys.add(norm(l));
+    }
+    knownLabels = [];
+    if (!keys.size) return;
+    for (const el of document.querySelectorAll(
+      'label, legend, h1, h2, h3, h4, h5, dt, th, b, strong, span, div, p'
+    )) {
+      const t = ownText(el);
+      if (!t || t.length > 24) continue;
+      const key = norm(t);
+      if (keys.has(key)) knownLabels.push({ el, key });
+    }
+  }
+
+  function isBlockedByOtherLabel(labelEl, control, ownKeys) {
+    for (const { el, key } of knownLabels) {
+      if (el === labelEl || ownKeys.has(key)) continue;
+      if (el.contains(control) || control.contains(el) || el.contains(labelEl)) continue;
+      const afterLabel = labelEl.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING;
+      const beforeControl = el.compareDocumentPosition(control) & Node.DOCUMENT_POSITION_FOLLOWING;
+      if (afterLabel && beforeControl) return true;
+    }
+    return false;
+  }
+
+  // 候補のうち「別ラベルに遮られていないもの」を優先する。
+  // 全部遮られている場合は従来どおり先頭を返す(改善であって後退させない)
+  function preferUnblocked(candidates, labelEl, spec) {
+    if (!knownLabels.length || candidates.length === 0) return candidates;
+    const ownKeys = new Set((spec?.labels || []).map(norm));
+    const ok = candidates.filter((c) => !isBlockedByOtherLabel(labelEl, c, ownKeys));
+    return ok.length ? ok : candidates;
   }
 
   // ---------- ラベルから入力欄を探す ----------
@@ -323,7 +404,7 @@ window.XW3 = window.XW3 || {};
   // ラベル要素から対応する入力欄を辿る。
   // 兄弟方向を無制限に走査すると隣の項目の入力欄を掴むため、
   // 「祖先を1段ずつ広げながらその内部だけを見る」方式にしている。
-  function resolveFromLabel(labelEl, selector) {
+  function resolveFromLabel(labelEl, selector, spec) {
     if (labelEl.tagName === 'LABEL') {
       const id = labelEl.getAttribute('for');
       if (id) {
@@ -334,7 +415,7 @@ window.XW3 = window.XW3 || {};
     let node = labelEl;
     for (let depth = 0; depth < 4 && node; depth += 1) {
       if (node.tagName === 'BODY' || node.tagName === 'HTML') break;
-      const found = orderedControls(node, selector, labelEl);
+      const found = preferUnblocked(orderedControls(node, selector, labelEl), labelEl, spec);
       if (found.length) return found[0];
       node = node.parentElement;
     }
@@ -350,7 +431,7 @@ window.XW3 = window.XW3 || {};
     }
     for (const label of spec.labels || []) {
       for (const node of labelNodes(label, root)) {
-        const el = resolveFromLabel(node, selector);
+        const el = resolveFromLabel(node, selector, spec);
         if (el) return el;
       }
     }
@@ -387,21 +468,35 @@ window.XW3 = window.XW3 || {};
         for (let depth = 0; depth < 4 && cur; depth += 1) {
           if (cur.tagName === 'BODY' || cur.tagName === 'HTML') break;
 
-          const radios = [...cur.querySelectorAll('input[type="radio"]')].filter(isVisible);
+          const radios = preferUnblocked(
+            [...cur.querySelectorAll('input[type="radio"]')].filter(isVisible),
+            node,
+            spec
+          );
           if (radios.length > 1) return cur;
 
-          const selects = orderedControls(cur, 'select', node);
+          const selects = preferUnblocked(orderedControls(cur, 'select', node), node, spec);
           // 広すぎる祖先(ページ全体)を掴んだ場合は打ち切る
           if (selects.length > 6) break;
-          if (selects.length > 1) return cur;
+          // 複数あるのは階層カテゴリのとき。それ以外は隣の項目なので先頭だけを使う
+          if (selects.length > 1) return spec.cascade ? cur : selects[0];
           if (selects.length === 1) return selects[0];
 
-          const triggers = orderedControls(
-            cur,
-            '[role="combobox"], [aria-haspopup], input[readonly], button, [role="button"]',
-            node
+          const triggers = preferUnblocked(orderedControls(cur, TRIGGER_SEL, node), node, spec);
+          if (triggers.length) return spec.cascade ? cur : triggers[0];
+
+          // role属性もbuttonも持たない「値を表示する行」(Yahoo!フリマのピッカー)。
+          // ラベル直後にある短いテキストの要素を選択UIとみなす(最後の手段)
+          const rows = preferUnblocked(
+            orderedControls(cur, 'div, span, a, p', node).filter((el) => {
+              if (node.contains(el) || el.contains(node)) return false;
+              const t = ownText(el);
+              return t && t.length <= 30;
+            }),
+            node,
+            spec
           );
-          if (triggers.length) return cur;
+          if (rows.length) return rows[0];
 
           cur = cur.parentElement;
         }
@@ -642,11 +737,26 @@ window.XW3 = window.XW3 || {};
     return document.querySelectorAll('img[src^="blob:"], img[src^="data:"]').length;
   }
 
+  // 「ここにドラッグ＆ドロップ」のような案内文からドロップ先を探す。
+  // クラス名に依存しないため、サイトの実装が変わっても効きやすい
+  function findByTextContains(phrase) {
+    const p = norm(phrase);
+    if (!p) return null;
+    const hits = [...document.querySelectorAll('div, label, p, span, section, form')].filter(
+      (el) => isVisible(el) && norm(el.textContent).includes(p)
+    );
+    // 最も内側の要素を返す(クリック/ドロップは親へ伝播する)
+    return hits.filter((el) => !hits.some((o) => o !== el && el.contains(o))).pop() || null;
+  }
+
   async function injectPhotos(files, spec = {}, root = document) {
     if (!files.length) return { ok: false, reason: '写真がありません' };
     // file inputは display:none のことが多いので可視判定しない
     const input = firstMatch(spec.inputSelectors || ['input[type="file"]'], root, true);
-    const zone = firstMatch(spec.dropzoneSelectors || [], root) || (input && input.closest('label, div'));
+    const zone =
+      firstMatch(spec.dropzoneSelectors || [], root) ||
+      (spec.dropzoneTexts || []).map(findByTextContains).find(Boolean) ||
+      (input && input.closest('label, div'));
     const count = typeof spec.countPhotos === 'function' ? spec.countPhotos : defaultCountPhotos;
     const before = count();
     let accepted = false;
@@ -802,6 +912,8 @@ window.XW3 = window.XW3 || {};
         const value = listing[key];
         if (!spec || !value) continue;
 
+        indexKnownLabels(site); // 遷移やシート開閉でDOMが変わるため項目ごとに取り直す
+
         if (spec.kind === 'page') {
           const steps = await fillViaPage(spec, value, isFormReady);
           steps.forEach((r, i) =>
@@ -824,6 +936,7 @@ window.XW3 = window.XW3 || {};
         const spec = F[key];
         const value = listing[key];
         if (!spec || value === undefined || value === null || value === '') continue;
+        indexKnownLabels(site);
         const el = findField(spec);
         push(label, el ? await fillText(el, value) : { ok: false, reason: '入力欄が見つかりません' });
         await sleep(120);

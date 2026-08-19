@@ -5,149 +5,166 @@
   <title>mock: Yahoo!フリマ風出品フォーム</title>
   <style>
     body { font-family: sans-serif; max-width: 760px; margin: 20px auto; padding: 0 16px; }
-    .field { margin: 14px 0; padding: 10px; border: 1px solid #ddd; border-radius: 8px; }
+    .card { margin: 14px 0; padding: 12px; border: 1px solid #ddd; border-radius: 8px; }
     .lbl { font-weight: 600; margin-bottom: 4px; }
-    input, textarea, select { padding: 6px; font-size: 14px; }
-    input[type=text], textarea { width: 100%; }
+    .req { font-size: 11px; background: #e60000; color: #fff; border-radius: 3px; padding: 1px 5px; margin-left: 4px; }
+    input, textarea, select { padding: 8px; font-size: 14px; }
+    input[type=text], textarea, select { width: 100%; }
     textarea { height: 80px; }
-    .cdd { position: relative; }
-    .cdd button.trigger { padding: 6px 12px; cursor: pointer; }
-    .cdd ul { list-style: none; margin: 4px 0; padding: 4px; border: 1px solid #bbb; background: #fff; max-width: 300px; }
-    .cdd li { padding: 4px 8px; cursor: pointer; }
-    .cdd li:hover { background: #eef; }
+    /* 値を表示する行(クリックでボトムシートが開く。role属性やbuttonではない) */
+    .picker { border: 1px solid #ccc; border-radius: 6px; padding: 10px; cursor: pointer; color: #888; }
+    .picker.filled { color: #111; }
     #zone { border: 2px dashed #aaa; padding: 20px; text-align: center; color: #666; }
-    #shots img { width: 60px; height: 60px; object-fit: cover; margin: 4px; }
+    #shots img { width: 56px; height: 56px; object-fit: cover; margin: 3px; }
     .chip { display: inline-block; background: #eef; border-radius: 12px; padding: 2px 10px; margin: 2px; font-size: 12px; }
-    #report { position: fixed; left: 8px; bottom: 8px; width: 380px; max-height: 90vh; overflow: auto;
-      background: #111; color: #eee; font: 12px/1.5 monospace; padding: 10px; border-radius: 8px; }
+    /* ボトムシート: プレーンなdivで組む(role="option"やliを使わない) */
+    #sheet { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: none; }
+    #sheet.open { display: block; }
+    #sheet .panel { background: #fff; max-width: 520px; margin: 8vh auto; border-radius: 10px; overflow: hidden; }
+    #sheet h2 { margin: 0; padding: 14px; text-align: center; border-bottom: 1px solid #eee; font-size: 15px; }
+    #sheet .opt { padding: 14px; border-bottom: 1px solid #eee; cursor: pointer; }
+    #sheet .opt:hover { background: #eef; }
+    #sheet .opt .sub { font-size: 12px; color: #666; }
+    #sheet .close { float: right; cursor: pointer; padding: 0 6px; }
+    #report { position: fixed; left: 8px; bottom: 8px; width: 390px; max-height: 92vh; overflow: auto;
+      background: #111; color: #eee; font: 12px/1.5 monospace; padding: 10px; border-radius: 8px; z-index: 10; }
     #report .ok { color: #6f6; } #report .ng { color: #f77; }
   </style>
 </head>
 <body>
   <h1>mock: Yahoo!フリマ風出品フォーム(検証用)</h1>
-  <p>カスタムドロップダウン・タグ専用欄・drop専用ゾーンの経路を検証する。</p>
 
-  <!-- 写真: input への直接セットには反応せず drop だけ受ける(react-dropzone想定) -->
-  <div class="field">
-    <div class="lbl">商品の画像</div>
+  <!-- 写真: クラス名にdropzone等を含めず、案内文だけが手がかり。dropのみ受ける -->
+  <div class="card">
     <input type="file" id="fi" accept="image/*" multiple style="display:none">
-    <div id="zone" class="dropzone">ここに画像をドロップ</div>
+    <div id="zone">
+      <button type="button" id="addimg">画像を追加する</button>
+      <div>画像は最大20枚まで<br>ここにドラッグ＆ドロップして追加することもできます</div>
+    </div>
     <div id="shots"></div>
   </div>
 
-  <div class="field">
-    <div class="lbl">商品名</div>
-    <input type="text" placeholder="商品名を入力" id="title">
+  <div class="card">
+    <div class="lbl">商品名<span class="req">必須</span></div>
+    <input type="text" id="title" placeholder="商品名を入力してください（必須）">
   </div>
 
-  <div class="field">
-    <div class="lbl">商品の説明</div>
+  <!-- カテゴリ/商品の状態: ボトムシート -->
+  <div class="card">
+    <div class="lbl">カテゴリ<span class="req">必須</span></div>
+    <div class="picker" data-sheet="category">選択してください（必須）</div>
+  </div>
+  <div class="card">
+    <div class="lbl">商品の状態<span class="req">必須</span></div>
+    <div class="picker" data-sheet="condition">選択してください（必須）</div>
+  </div>
+
+  <div class="card">
+    <div class="lbl">商品説明</div>
     <textarea placeholder="商品の説明を入力"></textarea>
   </div>
 
-  <div class="field">
+  <div class="card">
     <div class="lbl">ハッシュタグ</div>
-    <input type="text" id="tag" placeholder="ハッシュタグを入力してEnter">
+    <input type="text" id="tag" placeholder="ハッシュタグを入力">
     <div id="chips"></div>
   </div>
 
-  <div class="field">
-    <div class="lbl">カテゴリ</div>
-    <div class="cdd" id="cat">
-      <button type="button" class="trigger">カテゴリを選択</button>
-      <ul role="listbox" hidden></ul>
-      <div id="catpath" style="font-size:12px;color:#555"></div>
-    </div>
-  </div>
-
-  <div class="field">
-    <div class="lbl">商品の状態</div>
-    <div class="cdd" data-list="cond"><button type="button" class="trigger">選択してください</button><ul role="listbox" hidden></ul></div>
-  </div>
-
-  <!-- 実サイトに「配送料の負担」項目は存在しない(全品出品者負担・全国一律・匿名配送) -->
-
-  <!-- 配送方法: アコーディオン+ラジオ(業者2択) -->
-  <div class="field">
-    <div class="lbl">配送方法</div>
-    <div>
-      <label><input type="radio" name="carrier" value="yamato">おてがる配送（ヤマト運輸）</label><br>
-      <label><input type="radio" name="carrier" value="jp">おてがる配送（日本郵便）</label>
-    </div>
-  </div>
-
-  <div class="field">
-    <div class="lbl">発送元の地域</div>
+  <!-- 実サイト同様、3項目が1枚のカードに同居する(隣の項目を掴まないことの検証) -->
+  <div class="card">
+    <div class="lbl">配送方法<span class="req">必須</span></div>
+    <select id="ship">
+      <option value="">選択してください（必須）</option>
+      <option>おてがる配送（ヤマト運輸）</option>
+      <option>おてがる配送（日本郵便）</option>
+    </select>
+    <div class="lbl" style="margin-top:12px">発送までの日数<span class="req">必須</span></div>
+    <select id="days">
+      <option value="">選択してください（必須）</option>
+      <option>1~2日</option><option>2~3日</option><option>3~7日</option>
+    </select>
+    <div class="lbl" style="margin-top:12px">発送元の地域<span class="req">必須</span></div>
     <select id="from">
-      <option value="">選択してください</option>
+      <option value="">選択してください（必須）</option>
       <option>北海道</option><option>東京都</option><option>愛知県</option>
     </select>
   </div>
 
-  <div class="field">
-    <div class="lbl">発送までの日数</div>
-    <div class="cdd" data-list="days"><button type="button" class="trigger">選択してください</button><ul role="listbox" hidden></ul></div>
-  </div>
-
-  <div class="field">
-    <div class="lbl">価格</div>
+  <div class="card">
+    <div class="lbl">販売価格<span class="req">必須</span></div>
     <input type="text" id="price" placeholder="価格を入力">
   </div>
 
+  <div id="sheet"><div class="panel"><h2><span class="close">✕</span><span id="sheet-title"></span></h2><div id="sheet-body"></div></div></div>
   <div id="report">起動中…</div>
 
   <script>
-    // 実サイトの表記(2026-08時点): 状態は5段階で1番目は「未使用」(「新品、」が付かない)
-    const LISTS = {
-      cond: ['未使用', '未使用に近い', '目立った傷や汚れなし', 'やや傷や汚れあり', '傷や汚れあり'],
-      days: ['1~2日', '2~3日', '3~7日'],
+    const CONDITIONS = [
+      ['未使用', '未開封もしくは未使用で傷や汚れ、経年劣化、においなどが一切なく新品同様の状態'],
+      ['未使用に近い', '数回しか使用しておらず、傷、汚れ、色あせなどがない'],
+      ['目立った傷や汚れなし', '小さな傷や汚れはあるが目立つ大きさや場所ではない'],
+      ['やや傷や汚れあり', '中古だとわかる傷や汚れがある'],
+      ['傷や汚れあり', 'ひとめでわかる大きな傷や汚れがある、または複数ある'],
+    ];
+    // 実サイトのカテゴリは読点区切りで3〜5階層
+    const TREE = {
+      'ハンドメイド、手作り': { 'アクセサリー': { 'ピアス': null, 'ネックレス': null } },
+      'アウトドア、釣り、旅行用品': {
+        '釣り': { 'フィッシングツール': { '釣り用クーラーボックス': null, 'その他': null } },
+      },
     };
 
-    // 単段のカスタムドロップダウン
-    document.querySelectorAll('.cdd[data-list]').forEach((dd) => {
-      const btn = dd.querySelector('.trigger');
-      const ul = dd.querySelector('ul');
-      btn.addEventListener('click', () => {
-        ul.innerHTML = LISTS[dd.dataset.list].map((t) => `<li role="option">${t}</li>`).join('');
-        ul.hidden = false;
-        ul.querySelectorAll('li').forEach((li) => {
-          li.addEventListener('click', () => {
-            btn.textContent = li.textContent;
-            dd.dataset.value = li.textContent;
-            ul.hidden = true;
+    const sheet = document.getElementById('sheet');
+    const sheetBody = document.getElementById('sheet-body');
+    const sheetTitle = document.getElementById('sheet-title');
+    let catPath = [];
+
+    function openSheet(kind) {
+      sheet.classList.add('open');
+      if (kind === 'condition') {
+        sheetTitle.textContent = '商品の状態';
+        sheetBody.innerHTML = CONDITIONS.map(([t, s]) =>
+          `<div class="opt"><div>${t}</div><div class="sub">${s}</div></div>`).join('');
+        [...sheetBody.querySelectorAll('.opt')].forEach((el, i) => {
+          el.addEventListener('click', () => {
+            setPicker('condition', CONDITIONS[i][0]);
+            sheet.classList.remove('open');
           });
         });
-      });
-    });
-
-    // 階層カテゴリ: 1段選ぶと同じリストが次の階層に置き換わる
-    // 実サイトのカテゴリは読点区切り(メルカリは中黒)。3〜5階層
-    const TREE = {
-      'ハンドメイド、手作り': { 'アクセサリー': ['ピアス', 'ネックレス'] },
-      'アウトドア、釣り、旅行用品': { '釣り': ['その他釣り具', 'ルアー、フライ'] },
-    };
-    const cat = document.getElementById('cat');
-    const catBtn = cat.querySelector('.trigger');
-    const catUl = cat.querySelector('ul');
-    let picked = [];
-    function renderCat() {
-      let items;
-      if (picked.length === 0) items = Object.keys(TREE);
-      else if (picked.length === 1) items = Object.keys(TREE[picked[0]] || {});
-      else if (picked.length === 2) items = (TREE[picked[0]] || {})[picked[1]] || [];
-      else {
-        catUl.hidden = true;
-        catBtn.textContent = picked.join(' > ');
-        document.getElementById('catpath').textContent = picked.join(' > ');
         return;
       }
-      catUl.innerHTML = items.map((t) => `<li role="option">${t}</li>`).join('');
-      catUl.hidden = false;
-      catUl.querySelectorAll('li').forEach((li) => {
-        li.addEventListener('click', () => { picked.push(li.textContent); renderCat(); });
+      sheetTitle.textContent = 'カテゴリ';
+      let node = TREE;
+      for (const p of catPath) node = node[p];
+      const keys = Object.keys(node || {});
+      sheetBody.innerHTML = keys.map((k) => `<div class="opt">${k}</div>`).join('');
+      [...sheetBody.querySelectorAll('.opt')].forEach((el, i) => {
+        el.addEventListener('click', () => {
+          catPath.push(keys[i]);
+          let next = TREE;
+          for (const p of catPath) next = next[p];
+          if (!next) {
+            setPicker('category', catPath.join(' > '));
+            sheet.classList.remove('open');
+          } else {
+            openSheet('category');
+          }
+        });
       });
     }
-    catBtn.addEventListener('click', () => { picked = []; renderCat(); });
+    function setPicker(kind, value) {
+      const el = document.querySelector(`.picker[data-sheet="${kind}"]`);
+      el.textContent = value;
+      el.classList.add('filled');
+      el.dataset.value = value;
+    }
+    document.querySelectorAll('.picker').forEach((p) => {
+      p.addEventListener('click', () => {
+        if (p.dataset.sheet === 'category') catPath = [];
+        openSheet(p.dataset.sheet);
+      });
+    });
+    document.querySelector('#sheet .close').addEventListener('click', () => sheet.classList.remove('open'));
 
     // タグ: Enterでチップ化
     const tag = document.getElementById('tag');
@@ -160,7 +177,7 @@
       tag.value = '';
     });
 
-    // 写真: drop のみ受け付ける(input への直接セットは無視)
+    // 写真: dropのみ受け付ける(inputへの直接セットは無視)
     const zone = document.getElementById('zone');
     zone.addEventListener('dragover', (e) => e.preventDefault());
     zone.addEventListener('drop', (e) => {
@@ -182,10 +199,10 @@
       description: '3Dプリンタ製の中蓋トレーです。\n\n深さ15mm・エア穴付き',
       price: 1980,
       tags: ['ダイワ', 'クーラーボックス', '3Dプリント'],
-      category: 'アウトドア、釣り、旅行用品 > 釣り > その他釣り具',
+      category: 'アウトドア、釣り、旅行用品 > 釣り > フィッシングツール > 釣り用クーラーボックス',
       condition: '未使用',
       shipping: 'おてがる配送（日本郵便）',
-      shipDays: '1~2日',
+      shipDays: '3~7日',
       shipFrom: '東京都',
     }, {
       expect: {
@@ -194,15 +211,22 @@
         '商品の状態': '未使用',
         '配送の方法': 'おてがる配送（日本郵便）',
         '発送元の地域': '東京都',
-        '発送までの日数': '1~2日',
+        '発送までの日数': '3~7日',
       },
       checkDom: () => ({
         '説明文が入った': document.querySelector('textarea').value.includes('中蓋トレー'),
         'タグ3個がチップ化された': document.querySelectorAll('#chips .chip').length === 3,
-        'カテゴリ3階層が選択された': document.getElementById('catpath').textContent === 'アウトドア、釣り、旅行用品 > 釣り > その他釣り具',
+        'カテゴリ4階層が確定した':
+          document.querySelector('.picker[data-sheet="category"]').dataset.value ===
+          'アウトドア、釣り、旅行用品 > 釣り > フィッシングツール > 釣り用クーラーボックス',
+        'div製シートで状態が選べた':
+          document.querySelector('.picker[data-sheet="condition"]').dataset.value === '未使用',
         '写真3枚がdropで入った': document.querySelectorAll('#shots img').length === 3,
-        'ボトムシートで状態が反映された': document.querySelector('.cdd[data-list=cond]').dataset.value === '未使用',
-        'ラジオで配送業者が選択された': document.querySelector('input[name=carrier]:checked')?.value === 'jp',
+        // 同一カード内の隣の項目を掴んでいないこと
+        '配送方法に正しい値が入った': document.getElementById('ship').value === 'おてがる配送（日本郵便）',
+        '発送までの日数に正しい値が入った': document.getElementById('days').value === '3~7日',
+        '発送元の地域に正しい値が入った': document.getElementById('from').value === '東京都',
+        'シートが閉じている': !document.getElementById('sheet').classList.contains('open'),
       }),
     });
   </script>
